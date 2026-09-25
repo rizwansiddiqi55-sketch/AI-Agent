@@ -88,6 +88,7 @@ function setMessageText(el, text) {
 function setStatus(text) {
   statusEl.textContent = text || "";
   statusEl.hidden = !text;
+  if (typeof call !== "undefined") call.update(text);
 }
 
 // ---------- Text-to-speech ----------
@@ -118,6 +119,7 @@ const tts = {
     u.rate = 1.0;
     this.queue++;
     stopBtn.hidden = false;
+    call.update();
     u.onend = u.onerror = () => {
       this.queue = Math.max(0, this.queue - 1);
       if (this.queue === 0) this.onIdle();
@@ -128,10 +130,13 @@ const tts = {
     if (window.speechSynthesis) speechSynthesis.cancel();
     this.queue = 0;
     stopBtn.hidden = true;
+    call.update();
   },
   onIdle() {
     stopBtn.hidden = true;
-    if (handsFree.checked && !busy) startListening();
+    call.update();
+    // In one-to-one mode the conversation keeps going hands-free.
+    if ((handsFree.checked || call.open) && !busy) startListening();
   },
 };
 if (window.speechSynthesis) {
@@ -190,6 +195,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const CAN_RECORD = !!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 let micMode = CAN_RECORD ? "server" : SR ? "browser" : "none";
 let listening = false;
+let transcribing = false;
 
 function whisperLang() { return recogLang.startsWith("ur") ? "ur" : "en"; }
 
@@ -198,6 +204,7 @@ function setListeningUI(on, label = "Listening…") {
   micBtn.classList.toggle("listening", on);
   if (on) setStatus(label);
   else if (statusEl.textContent === label) setStatus("");
+  call.update();
 }
 
 // iOS only allows speech output after it has been started from a tap once.
@@ -210,7 +217,7 @@ function unlockAudio() {
 
 // --- Server (Whisper) recorder with automatic end-of-speech detection ---
 const recorder = {
-  audioCtx: null, stream: null, rec: null, chunks: [], timer: null, cancelled: false,
+  audioCtx: null, stream: null, rec: null, chunks: [], timer: null, cancelled: false, discard: false,
 
   pickMime() {
     const types = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus"];
@@ -255,6 +262,7 @@ const recorder = {
       let sum = 0;
       for (const v of buf) sum += v * v;
       const rms = Math.sqrt(sum / buf.length);
+      call.setLevel(rms);
       const now = Date.now();
       if (rms > 0.02) { heardSpeech = true; lastLoud = now; }
       if (heardSpeech && now - lastLoud > 1500) this.stop();          // paused after speaking
@@ -272,6 +280,7 @@ const recorder = {
   async finish() {
     this.stream.getTracks().forEach((t) => t.stop());
     setListeningUI(false);
+    if (this.discard) { this.discard = false; return; }
     const type = (this.rec.mimeType || "audio/webm").split(";")[0];
     const blob = new Blob(this.chunks, { type });
     if (this.cancelled || blob.size < 2000) {
@@ -279,6 +288,8 @@ const recorder = {
       return;
     }
     setStatus("Transcribing…");
+    transcribing = true;
+    call.update();
     try {
       const res = await api(`/api/transcribe?lang=${whisperLang()}`, {
         method: "POST", headers: { "Content-Type": type }, body: blob,
@@ -295,6 +306,9 @@ const recorder = {
       else setStatus("Didn't catch that. Try again.");
     } catch (err) {
       setStatus(`Speech recognition failed: ${err.message}`);
+    } finally {
+      transcribing = false;
+      call.update();
     }
   },
 };
@@ -364,6 +378,94 @@ document.querySelectorAll(".seg-btn").forEach((btn) => {
   });
 });
 
+// ---------- One-to-one call with the robot ----------
+// `var` so earlier helpers (setStatus) can safely check it before this line runs.
+var call = {
+  open: false,
+  el: $("call"),
+  ring: document.querySelector("#call .ring"),
+  lastStatus: "",
+
+  state() {
+    if (listening) return "listening";
+    if (tts.queue > 0) return "speaking";
+    if (busy || transcribing) return "thinking";
+    return "idle";
+  },
+
+  update(statusText) {
+    if (statusText !== undefined) this.lastStatus = statusText || "";
+    if (!this.open) return;
+    const state = this.state();
+    this.el.dataset.state = state;
+    const labels = {
+      listening: ["Listening… pause when you're done", "Tap to send"],
+      thinking: [transcribing ? "Understanding what you said…" : "Thinking…", "Please wait"],
+      speaking: ["Speaking… tap to interrupt", "Tap to interrupt"],
+      idle: [this.lastStatus || "Tap the robot to start talking", "Tap to talk"],
+    };
+    let [status, button] = labels[state];
+    // Show tool progress / rate-limit waits while thinking
+    if (state === "thinking" && !transcribing && this.lastStatus) status = this.lastStatus;
+    $("callStatus").textContent = status;
+    $("callTalk").textContent = button;
+    $("callTalk").disabled = state === "thinking";
+    $("robotBtn").setAttribute("aria-label", button);
+    if (state !== "listening") this.setLevel(0);
+  },
+
+  setLevel(rms) {
+    if (!this.open || !this.ring) return;
+    this.ring.style.setProperty("--level", Math.min(1, rms * 12).toFixed(2));
+  },
+
+  caption(who, text) {
+    const el = who === "you" ? $("capYou") : $("capTutor");
+    const clean = cleanForSpeech(text.replace(/```[\s\S]*?(```|$)/g, " [code on screen] "));
+    el.textContent = clean ? (who === "you" ? `You: ${clean}` : clean) : "";
+    el.dir = URDU_RE.test(clean.slice(0, 60)) ? "rtl" : "auto";
+  },
+
+  toggleTalk() {
+    unlockAudio();
+    if (listening) stopListening();
+    else if (tts.queue > 0) { tts.cancel(); startListening(); }
+    else if (!busy && !transcribing) startListening();
+  },
+
+  start() {
+    unlockAudio();
+    this.open = true;
+    this.el.hidden = false;
+    $("callLang").textContent = recogLang.startsWith("ur") ? "اردو · Urdu" : "English";
+    this.lastStatus = "";
+    this.caption("you", "");
+    this.caption("tutor", "");
+    this.update();
+    if (micMode === "none") {
+      $("callStatus").textContent = "Voice input isn't supported in this browser.";
+      return;
+    }
+    startListening();
+  },
+
+  end() {
+    this.open = false;
+    this.el.hidden = true;
+    if (listening) {
+      if (micMode === "server") { recorder.discard = true; recorder.stop(true); } else stopListening();
+    }
+    tts.cancel();
+    setStatus("");
+  },
+};
+
+$("callBtn").addEventListener("click", () => call.start());
+$("callEnd").addEventListener("click", () => call.end());
+$("robotBtn").addEventListener("click", () => call.toggleTalk());
+$("callTalk").addEventListener("click", () => call.toggleTalk());
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && call.open) call.end(); });
+
 // ---------- Chat ----------
 let busy = false;
 
@@ -373,9 +475,13 @@ async function send(text, mode = null) {
   tts.cancel();
   textInput.value = "";
   addMessage("user", text);
+  call.caption("you", text);
+  call.caption("tutor", "");
+  call.update();
   const el = addMessage("assistant", "");
   el.innerHTML = '<span class="muted">…</span>';
   let full = "";
+  let failed = false;
   const chunker = new SpeechChunker();
 
   try {
@@ -402,6 +508,7 @@ async function send(text, mode = null) {
           setStatus("");
           full += event.text;
           setMessageText(el, full);
+          call.caption("tutor", full);
           chunker.push(event.text);
         } else if (event.type === "status") {
           setStatus(event.text);
@@ -410,17 +517,23 @@ async function send(text, mode = null) {
           addMessage("info", event.text);
         } else if (event.type === "error") {
           addMessage("error", event.text);
+          call.caption("tutor", event.text);
+          failed = true;
         }
       }
     }
   } catch (err) {
     addMessage("error", `Connection problem: ${err.message}`);
+    call.caption("tutor", `Connection problem: ${err.message}`);
+    failed = true;
   } finally {
     chunker.flush();
     if (!full) el.remove();
     setStatus("");
     busy = false;
-    if (tts.queue === 0) tts.onIdle();
+    call.update(failed ? "Something went wrong. Tap the robot to try again." : "");
+    // Don't reopen the mic automatically after an error (avoids an error loop in 1:1 mode).
+    if (tts.queue === 0 && !failed) tts.onIdle();
     if (!$("progressPanel").hidden) loadProgress();
   }
 }

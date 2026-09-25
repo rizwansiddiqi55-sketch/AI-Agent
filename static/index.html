@@ -20,6 +20,7 @@
         <button type="button" class="seg-btn active" data-lang="en-US">EN</button>
         <button type="button" class="seg-btn" data-lang="ur-PK">اردو</button>
       </div>
+      <button type="button" id="callBtn" class="ghost call-btn" title="One-to-one voice conversation">🤖 Talk 1:1</button>
       <button type="button" id="progressBtn" class="ghost">Progress</button>
       <button type="button" id="resetBtn" class="ghost" title="Start a new conversation (progress is kept)">New chat</button>
     </div>
@@ -47,7 +48,52 @@
       <button type="button" id="micBtn" class="mic" aria-label="Start speaking">🎤</button>
     </form>
     <p id="micHint" class="hint" hidden>Voice input is not supported in this browser. You can still type.</p>
+    <p class="credit">This AI agent is designed by <b>Rizwan Siddiqi</b></p>
   </footer>
+
+  <section id="call" class="call" data-state="idle" hidden aria-label="One-to-one conversation">
+    <header class="call-top">
+      <div>
+        <h2>One-to-one</h2>
+        <p class="sub" id="callLang">English</p>
+      </div>
+      <button type="button" id="callEnd" class="end-btn">End</button>
+    </header>
+
+    <button type="button" id="robotBtn" class="robot-wrap" aria-label="Tap to talk">
+      <span class="ring" aria-hidden="true"></span>
+      <svg class="robot" viewBox="0 0 200 230" role="img" aria-label="Robot tutor">
+        <line class="antenna" x1="100" y1="34" x2="100" y2="14"/>
+        <circle class="bulb" cx="100" cy="11" r="7"/>
+        <rect class="ear" x="26" y="66" width="14" height="34" rx="6"/>
+        <rect class="ear" x="160" y="66" width="14" height="34" rx="6"/>
+        <rect class="head" x="38" y="32" width="124" height="104" rx="30"/>
+        <rect class="face" x="54" y="48" width="92" height="70" rx="20"/>
+        <g class="eyes">
+          <ellipse class="eye" cx="80" cy="76" rx="9" ry="10"/>
+          <ellipse class="eye" cx="120" cy="76" rx="9" ry="10"/>
+        </g>
+        <g class="mouth">
+          <rect class="bar" x="79" y="96" width="6" height="8" rx="3"/>
+          <rect class="bar" x="89" y="96" width="6" height="8" rx="3"/>
+          <rect class="bar" x="99" y="96" width="6" height="8" rx="3"/>
+          <rect class="bar" x="109" y="96" width="6" height="8" rx="3"/>
+          <rect class="bar" x="119" y="96" width="6" height="8" rx="3"/>
+        </g>
+        <rect class="neck" x="84" y="136" width="32" height="10" rx="3"/>
+        <rect class="body" x="50" y="146" width="100" height="70" rx="24"/>
+        <circle class="core" cx="100" cy="181" r="11"/>
+      </svg>
+    </button>
+
+    <p class="call-status" id="callStatus" aria-live="polite">Tap the robot to start talking</p>
+    <div class="captions" aria-live="polite">
+      <p id="capYou" class="cap you"></p>
+      <p id="capTutor" class="cap tutor"></p>
+    </div>
+    <button type="button" id="callTalk" class="call-talk">Tap to talk</button>
+    <p class="credit">This AI agent is designed by <b>Rizwan Siddiqi</b></p>
+  </section>
 
   <aside id="progressPanel" class="panel" hidden>
     <div class="panel-head">

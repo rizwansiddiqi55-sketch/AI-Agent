@@ -11,6 +11,10 @@
   --code-bg: #0f172a;
   --code-text: #e2e8f0;
   --danger: #b42318;
+  --robot-body: #dfe7ee;
+  --robot-edge: #9fb0c0;
+  --robot-face: #0f1b2a;
+  --robot-glow: #2dd4bf;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -26,6 +30,10 @@
     --code-bg: #0b0f16;
     --code-text: #d7dee8;
     --danger: #f97066;
+    --robot-body: #2a3441;
+    --robot-edge: #4b5a6b;
+    --robot-face: #070b11;
+    --robot-glow: #2dd4bf;
   }
 }
 
@@ -130,3 +138,96 @@ button { font: inherit; cursor: pointer; }
 .panel li { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: .9rem; }
 .level { float: right; font-size: .78rem; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 .muted { color: var(--muted); font-size: .85rem; }
+
+/* ---------- Footer credit ---------- */
+.credit { text-align: center; font-size: .78rem; color: var(--muted); margin: 8px 0 0; }
+.credit b { color: var(--text); font-weight: 600; }
+
+/* ---------- One-to-one call ---------- */
+.call-btn { white-space: nowrap; }
+.call {
+  position: fixed; inset: 0; z-index: 20; background: var(--bg);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+.call-top { width: 100%; max-width: 520px; display: flex; justify-content: space-between; align-items: center; }
+.call-top h2 { margin: 0; font-size: 1.1rem; }
+.call-top .sub { margin: 0; font-size: .8rem; color: var(--muted); }
+.end-btn {
+  border: 0; border-radius: 999px; padding: 8px 18px; background: var(--danger); color: #fff; font-weight: 600;
+}
+
+.robot-wrap {
+  position: relative; margin: auto 0 8px; border: 0; background: transparent; padding: 0;
+  width: min(62vw, 300px); aspect-ratio: 200 / 230; cursor: pointer; flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+.robot { position: relative; width: 100%; height: 100%; overflow: visible; }
+.ring {
+  --level: 0;
+  position: absolute; left: 50%; top: 46%; width: 96%; aspect-ratio: 1; border-radius: 50%;
+  transform: translate(-50%, -50%) scale(calc(0.9 + var(--level) * 0.35));
+  background: radial-gradient(circle, color-mix(in srgb, var(--robot-glow) 28%, transparent) 0%, transparent 68%);
+  opacity: 0; transition: opacity .3s, transform .08s linear;
+}
+
+.robot .head, .robot .body { fill: var(--robot-body); stroke: var(--robot-edge); stroke-width: 3; }
+.robot .ear, .robot .neck { fill: var(--robot-edge); }
+.robot .antenna { stroke: var(--robot-edge); stroke-width: 4; stroke-linecap: round; }
+.robot .bulb { fill: var(--robot-edge); }
+.robot .face { fill: var(--robot-face); }
+.robot .eye { fill: var(--robot-glow); transform-box: fill-box; transform-origin: center; animation: blink 4.5s infinite; }
+.robot .bar { fill: var(--robot-glow); transform-box: fill-box; transform-origin: center; transform: scaleY(.45); }
+.robot .core { fill: var(--robot-edge); }
+
+@keyframes blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.1); } }
+@keyframes talk { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(2.4); } }
+@keyframes bulb { 0%, 100% { fill: var(--robot-edge); } 50% { fill: var(--robot-glow); } }
+@keyframes look { 0%, 100% { transform: translateX(-5px); } 50% { transform: translateX(5px); } }
+@keyframes glow { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+
+/* listening: ring follows mic level, ears and bulb light up */
+.call[data-state="listening"] .ring { opacity: 1; }
+.call[data-state="listening"] .ear,
+.call[data-state="listening"] .bulb { fill: var(--robot-glow); }
+.call[data-state="listening"] .eye { transform: scaleY(1.15); animation: none; }
+
+/* thinking: antenna blinks, eyes look around */
+.call[data-state="thinking"] .bulb { animation: bulb .8s infinite; }
+.call[data-state="thinking"] .eyes { animation: look 1.4s ease-in-out infinite; }
+
+/* speaking: mouth bars move, chest core glows */
+.call[data-state="speaking"] .bar { animation: talk .5s ease-in-out infinite; }
+.call[data-state="speaking"] .bar:nth-child(2) { animation-delay: .12s; }
+.call[data-state="speaking"] .bar:nth-child(3) { animation-delay: .24s; }
+.call[data-state="speaking"] .bar:nth-child(4) { animation-delay: .06s; }
+.call[data-state="speaking"] .bar:nth-child(5) { animation-delay: .18s; }
+.call[data-state="speaking"] .core { fill: var(--robot-glow); animation: glow .9s infinite; }
+
+.call-status { margin: 4px 0 8px; color: var(--muted); font-size: .95rem; text-align: center; min-height: 1.4em; }
+.captions { width: 100%; max-width: 520px; min-height: 4.5em; }
+.cap { margin: 0 0 6px; font-size: .95rem; line-height: 1.45; text-align: center;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.cap.you { color: var(--muted); }
+.cap.tutor { color: var(--text); }
+.cap:empty { display: none; }
+.call-talk {
+  margin: 10px 0 auto; border: 0; border-radius: 999px; padding: 14px 28px; min-width: 200px;
+  background: var(--accent); color: var(--surface); font-weight: 600; font-size: 1rem;
+}
+.call[data-state="listening"] .call-talk { background: var(--danger); color: #fff; }
+
+@media (prefers-reduced-motion: reduce) {
+  .robot .eye, .call[data-state] .bar, .call[data-state] .bulb, .call[data-state] .eyes, .call[data-state] .core { animation: none !important; }
+  .call[data-state="speaking"] .bar { transform: scaleY(1.6); }
+}
+
+/* Header buttons: never squash labels; wrap to a second row on narrow phones */
+.top-actions { flex-wrap: wrap; justify-content: flex-end; }
+.ghost, .seg-btn { white-space: nowrap; }
+@media (max-width: 480px) {
+  .topbar { gap: 8px; }
+  .top-actions { gap: 6px; width: 100%; justify-content: flex-start; }
+  .top-actions .ghost, .seg-btn { padding: 6px 9px; font-size: .9rem; }
+}
