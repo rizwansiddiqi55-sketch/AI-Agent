@@ -43,7 +43,9 @@ The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `
 
 1. Import the GitHub repo into Vercel.
 2. **Project → Settings → Environment Variables**: add `GROQ_API_KEY` and `APP_PASSCODE`. Without `APP_PASSCODE`, the API refuses all requests on Vercel, so nobody else can spend your API credit.
-3. **Project → Storage → Create Database → Neon (Postgres)**: connect it to the project. This sets `DATABASE_URL`, which keeps your progress and notes permanently. Without it the app uses a temporary SQLite file in `/tmp` that resets often.
+3. **Database (keeps your progress and notes permanently)**. Any Postgres works. Without one the app uses a temporary SQLite file in `/tmp` that resets often.
+   - **Supabase (free plan):** create a project, then click **Connect** at the top of the dashboard and copy the **Transaction pooler** connection string (port `6543`). Replace `[YOUR-PASSWORD]` with your database password; if the password has symbols like `@`, `#`, or `/`, URL-encode them (for example `@` → `%40`). Add it in Vercel as `DATABASE_URL`. Don't use the "Direct connection" string, because it is IPv6-only and Vercel can't reach it. The app creates its tables on first use and turns on row-level security for them.
+   - **Neon:** Storage → Create Database → Neon, and connect it to this project (sets `DATABASE_URL`).
 4. Redeploy. Open the site, and enter the passcode once per browser when asked.
 
 ### Configuration (`.env`)
@@ -58,7 +60,7 @@ The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `
 | `CLAUDE_MODEL` | `claude-opus-5` | Claude model |
 | `EFFORT` | `medium` | Claude effort: `low` / `medium` / `high` / `xhigh` / `max` |
 | `ENABLE_FALLBACK` | `true` | Claude server-side refusal fallback (Anthropic beta) |
-| `DATABASE_URL` | – | Postgres URL (e.g. Neon). Used instead of SQLite when set |
+| `DATABASE_URL` | – | Postgres URL (Supabase transaction pooler, Neon, ...). Used instead of SQLite when set |
 | `DB_PATH` | `tutor.db` | SQLite file for memory |
 | `APP_PASSCODE` | – | If set, the API requires this passcode. Required on Vercel |
 | `MAX_HISTORY_MESSAGES` | `80` | After this many messages the chat starts fresh. Progress, notes, and lesson position are kept |

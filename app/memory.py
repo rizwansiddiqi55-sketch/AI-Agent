@@ -5,6 +5,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 LEVELS = ["Not Started", "Beginner", "Developing", "Intermediate", "Advanced", "Mastered"]
 SUBJECTS = ["AI", "Python", "Networking", "Cybersecurity", "English"]
@@ -94,6 +95,22 @@ class _SqliteBackend:
             self._conn.executescript(script)
 
 
+TABLES = ["messages", "progress", "notes", "current_lesson", "english_corrections", "profile"]
+
+# Query parameters some providers add for their own tooling; libpq rejects them.
+_NON_LIBPQ_PARAMS = {"supa", "pgbouncer"}
+
+
+def clean_postgres_url(url: str) -> str:
+    """Make a provider connection string (Supabase, Neon, ...) acceptable to libpq."""
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k not in _NON_LIBPQ_PARAMS]
+    host = parts.hostname or ""
+    if host.endswith((".supabase.com", ".supabase.co")) and not any(k == "sslmode" for k, _ in query):
+        query.append(("sslmode", "require"))
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
 class _PostgresBackend:
     param = "%s"
     id_type = "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
@@ -103,6 +120,9 @@ class _PostgresBackend:
         from psycopg.rows import dict_row
 
         self._psycopg = psycopg
+        url = clean_postgres_url(url)
+        # prepare_threshold=None: no server-side prepared statements, so transaction-mode
+        # poolers (Supabase Supavisor on port 6543, Neon pooler) work.
         self._connect = lambda: psycopg.connect(url, autocommit=True, row_factory=dict_row,
                                                 prepare_threshold=None)
         self._conn = self._connect()
@@ -127,6 +147,11 @@ class _PostgresBackend:
     def executescript(self, script: str) -> None:
         self._run(lambda c: c.execute(script))
 
+    def after_schema(self) -> None:
+        # Supabase exposes the public schema through its REST API. With RLS on and no policies,
+        # that API cannot read these tables; this app connects as the table owner, which bypasses RLS.
+        self.executescript("".join(f"ALTER TABLE {t} ENABLE ROW LEVEL SECURITY;" for t in TABLES))
+
 
 class Memory:
     """Long-term memory. `target` is a SQLite file path or a postgres:// URL."""
@@ -138,6 +163,8 @@ class Memory:
             self._db = _SqliteBackend(target)
         self._lock = threading.Lock()
         self._db.executescript(SCHEMA.replace("{id}", self._db.id_type))
+        if hasattr(self._db, "after_schema"):
+            self._db.after_schema()
         self._execute(
             "INSERT INTO profile (id, data) VALUES (1, ?) ON CONFLICT (id) DO NOTHING",
             (json.dumps(DEFAULT_PROFILE),),

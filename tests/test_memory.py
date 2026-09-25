@@ -34,3 +34,26 @@ def test_history_roundtrip_and_clear(memory):
     assert memory.get_history("s2") == []
     memory.clear_history("s1")
     assert memory.get_history("s1") == []
+
+
+def test_clean_postgres_url_supabase():
+    from app.memory import clean_postgres_url
+
+    url = ("postgres://postgres.abc:pw@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
+           "?sslmode=require&supa=base-pooler.x")
+    assert clean_postgres_url(url) == (
+        "postgres://postgres.abc:pw@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require")
+    assert clean_postgres_url(
+        "postgresql://postgres.abc:p%40ss@aws-0-x.pooler.supabase.com:6543/postgres?pgbouncer=true"
+    ) == "postgresql://postgres.abc:p%40ss@aws-0-x.pooler.supabase.com:6543/postgres?sslmode=require"
+    # Non-Supabase URLs are left alone apart from unknown params
+    assert clean_postgres_url("postgresql://u@localhost/db") == "postgresql://u@localhost/db"
+
+
+def test_postgres_tables_have_rls(memory):
+    if not hasattr(memory._db, "after_schema"):
+        return  # SQLite backend
+    rows = memory._query("SELECT relname FROM pg_class WHERE relrowsecurity AND relname = 'progress'")
+    assert rows and rows[0]["relname"] == "progress"
+    memory.save_note("rls", "owner can still write")
+    assert memory.get_notes("rls")

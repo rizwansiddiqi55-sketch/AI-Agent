@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     effort: str = "medium"
     max_tokens: int = 16000
     enable_fallback: bool = True
-    # Postgres URL (set automatically by the Vercel Neon integration). Takes precedence over db_path.
+    # Postgres URL (e.g. Supabase transaction pooler or Neon). Takes precedence over db_path.
     database_url: str | None = Field(
         default=None, validation_alias=AliasChoices("DATABASE_URL", "POSTGRES_URL")
     )

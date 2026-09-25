@@ -59,12 +59,15 @@ PG_URL = os.environ.get("TEST_DATABASE_URL")
 TABLES = "messages, progress, notes, current_lesson, english_corrections, profile"
 
 
+
 @pytest.fixture(params=["sqlite"] + (["postgres"] if PG_URL else []))
 def memory(request, tmp_path):
     if request.param == "postgres":
         import psycopg
 
-        with psycopg.connect(PG_URL, autocommit=True) as conn:
+        from app.memory import clean_postgres_url
+
+        with psycopg.connect(clean_postgres_url(PG_URL), autocommit=True) as conn:
             conn.execute(f"DROP TABLE IF EXISTS {TABLES}")
         return Memory(PG_URL)
     return Memory(str(tmp_path / "test.db"))
