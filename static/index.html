@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Voice Tutor</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" aria-hidden="true"></span>
+      <div>
+        <h1>AI Voice Tutor</h1>
+        <p class="sub">AI · Python · Networking · English</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <div class="seg" role="group" aria-label="Speech recognition language">
+        <button type="button" class="seg-btn active" data-lang="en-US">EN</button>
+        <button type="button" class="seg-btn" data-lang="ur-PK">اردو</button>
+      </div>
+      <button type="button" id="progressBtn" class="ghost">Progress</button>
+      <button type="button" id="resetBtn" class="ghost" title="Start a new conversation (progress is kept)">New chat</button>
+    </div>
+  </header>
+
+  <nav id="modes" class="modes" aria-label="Learning modes"></nav>
+
+  <main id="transcript" class="transcript" aria-live="polite">
+    <div class="empty" id="emptyState">
+      <p class="big">Assalam-o-Alaikum, Rizwan 👋</p>
+      <p>Tap the mic and speak in English, Urdu, or Roman Urdu. You can also pick a mode above, like <b>Plan my day</b>, <b>Continue</b>, or <b>Interview me</b>.</p>
+    </div>
+  </main>
+
+  <div id="status" class="status" hidden></div>
+
+  <footer class="composer">
+    <label class="handsfree" title="Start listening automatically after the tutor finishes speaking">
+      <input type="checkbox" id="handsFree"> Hands-free
+    </label>
+    <form id="form" class="input-row">
+      <input id="textInput" type="text" autocomplete="off" placeholder="Type or tap the mic…" aria-label="Message">
+      <button type="button" id="stopBtn" class="icon ghost" title="Stop speaking" aria-label="Stop speaking" hidden>■</button>
+      <button type="submit" class="icon ghost" title="Send" aria-label="Send">➤</button>
+      <button type="button" id="micBtn" class="mic" aria-label="Start speaking">🎤</button>
+    </form>
+    <p id="micHint" class="hint" hidden>Voice input needs Chrome or Edge. You can still type.</p>
+  </footer>
+
+  <aside id="progressPanel" class="panel" hidden>
+    <div class="panel-head">
+      <h2>Your progress</h2>
+      <button type="button" id="closePanel" class="ghost" aria-label="Close">✕</button>
+    </div>
+    <div id="progressBody"></div>
+  </aside>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
