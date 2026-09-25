@@ -32,8 +32,8 @@ def create_agent() -> Any:
     settings = get_settings()
     log = logging.getLogger("tutor")
     memory = Memory(settings.memory_target)
-    system_prompt = load_system_prompt(settings.system_prompt_path)
     if settings.llm_provider == "anthropic":
+        system_prompt = load_system_prompt(settings.system_prompt_path)
         if not (settings.anthropic_api_key or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
             log.warning("ANTHROPIC_API_KEY is not set.")
         # api_key=None lets the SDK fall back to its own credential resolution
@@ -42,8 +42,10 @@ def create_agent() -> Any:
     if not settings.groq_api_key:
         log.warning("GROQ_API_KEY is not set. Copy .env.example to .env and add your key.")
     # A placeholder key lets the app start; requests then fail with a clear auth error.
-    groq_client = groq.AsyncGroq(api_key=settings.groq_api_key or "missing-key")
-    return GroqTutorAgent(groq_client, settings, memory, system_prompt)
+    # max_retries=0: the agent handles rate limits itself and tells the user it is waiting.
+    groq_client = groq.AsyncGroq(api_key=settings.groq_api_key or "missing-key", max_retries=0)
+    return GroqTutorAgent(groq_client, settings, memory,
+                          load_system_prompt(settings.groq_system_prompt_path))
 
 
 _agent_lock = threading.Lock()

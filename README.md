@@ -19,6 +19,7 @@ Browser mic ── recorded audio ──► /api/transcribe (Groq Whisper, en / 
 - **Speech-to-text uses Groq Whisper** (`whisper-large-v3`). The page records your voice, stops automatically when you pause, and the server transcribes it. This works in every modern browser, including **iPhone Safari**, and handles Urdu much better than browser dictation. If `GROQ_API_KEY` isn't set, the page falls back to the browser's built-in speech recognition (Chrome/Edge).
 - **Text-to-speech runs in the browser** (speechSynthesis), free and with no extra key. Code blocks and CLI commands appear on screen but are not read aloud.
 - **Groq** powers the tutor by default, through the official `groq` Python SDK. The default model is `openai/gpt-oss-120b`, which is fast, good at tool calling, and multilingual. Replies stream and the model's reasoning is hidden. You can change the model with `GROQ_MODEL`.
+- **Groq free plan:** requests are kept small so they fit Groq's free-tier limits (for `gpt-oss-120b`, 8,000 tokens per minute). Groq uses a condensed prompt ([`prompts/compact_system_prompt.md`](prompts/compact_system_prompt.md)) and only the recent part of the conversation; lesson, progress and notes stay available through the memory tools. If Groq asks the app to wait a few seconds, it shows "waiting" and retries on its own. For heavier daily use, Groq's pay-as-you-go Dev tier removes these limits.
 - **Claude** is also supported. Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` to use it instead. It uses the official `anthropic` SDK with adaptive thinking and prompt caching. Each provider keeps its own conversation history. Progress, notes, and lesson position are shared.
 - **Memory tools** let the tutor save and read its own progress data: `update_progress`, `set_current_lesson` / `get_current_lesson`, `save_note` / `get_notes`, `log_english_correction`, and `get_learner_profile`.
 
@@ -56,7 +57,9 @@ The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `
 | `LLM_PROVIDER` | `groq` | `groq` or `anthropic` |
 | `GROQ_API_KEY` | – | Your Groq API key (from console.groq.com/keys) |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Any Groq chat model that supports tool calling, e.g. `llama-3.3-70b-versatile` |
-| `GROQ_REASONING_EFFORT` | `medium` | `low` / `medium` / `high`. Only sent to reasoning models (gpt-oss, qwen3) |
+| `GROQ_REASONING_EFFORT` | `low` | `low` / `medium` / `high`. Only sent to reasoning models (gpt-oss, qwen3) |
+| `GROQ_HISTORY_CHARS` | `6000` | How much recent conversation is sent per request (~4 characters per token) |
+| `GROQ_MAX_TOKENS` | `2048` | Max reply length, including hidden reasoning |
 | `GROQ_STT_MODEL` | `whisper-large-v3` | Speech recognition model (`whisper-large-v3-turbo` is faster) |
 | `ANTHROPIC_API_KEY` | – | Only needed with `LLM_PROVIDER=anthropic` |
 | `CLAUDE_MODEL` | `claude-opus-5` | Claude model |

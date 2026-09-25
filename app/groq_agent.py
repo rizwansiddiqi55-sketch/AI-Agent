@@ -1,5 +1,6 @@
 """Tutor agent backed by Groq (OpenAI-compatible chat completions with tool calling)."""
 
+import asyncio
 import json
 import logging
 import re
@@ -30,6 +31,35 @@ def groq_tools() -> list[dict]:
         }
         for t in TOOL_DEFINITIONS
     ]
+
+
+def window_history(history: list[dict], max_chars: int) -> list[dict]:
+    """Most recent messages that fit in ~max_chars, starting at a user turn.
+
+    Groq's free tier limits tokens per minute, so only recent turns are sent; long-term
+    memory (lesson, progress, notes) lives in the database and is reachable through tools.
+    """
+    total = 0
+    start = len(history)
+    for i in range(len(history) - 1, -1, -1):
+        total += len(json.dumps(history[i], ensure_ascii=False))
+        if total > max_chars:
+            break
+        start = i
+    while start < len(history) and history[start].get("role") != "user":
+        start += 1
+    return history[start:]
+
+
+def _retry_after(exc: groq.APIStatusError) -> float | None:
+    try:
+        value = exc.response.headers.get("retry-after")
+        if value:
+            return float(value)
+    except (AttributeError, ValueError):
+        pass
+    match = re.search(r"try again in ([\d.]+)s", _error_message(exc))
+    return float(match.group(1)) if match else None
 
 
 def _supports_reasoning_effort(model: str) -> bool:
@@ -154,6 +184,9 @@ class GroqTutorAgent:
         ]
         usage_total = {"input_tokens": 0, "output_tokens": 0}
         retried_tool_failure = False
+        waited_for_rate_limit = False
+        shrunk_history = False
+        window = window_history(history, self.settings.groq_history_chars)
 
         try:
             rounds = 0
@@ -161,13 +194,31 @@ class GroqTutorAgent:
                 rounds += 1
                 out: dict = {}
                 try:
-                    async for delta in self._stream_once(history + new_messages, out):
+                    async for delta in self._stream_once(window + new_messages, out):
                         yield {"type": "text", "text": delta}
+                except groq.RateLimitError as exc:
+                    # Free tier: short waits are worth it; long ones (daily limit) are reported.
+                    wait = _retry_after(exc)
+                    if wait is not None and wait <= self.settings.groq_max_rate_limit_wait \
+                            and not waited_for_rate_limit:
+                        waited_for_rate_limit = True
+                        yield {"type": "status", "text": f"Groq free-plan limit, waiting {wait:.0f}s…"}
+                        await asyncio.sleep(wait + 0.5)
+                        rounds -= 1
+                        continue
+                    raise
                 except groq.APIStatusError as exc:
                     # Groq rejects malformed tool calls with tool_use_failed; one retry usually fixes it.
                     if _is_tool_use_failed(exc) and not retried_tool_failure:
                         retried_tool_failure = True
                         log.warning("tool_use_failed, retrying once")
+                        rounds -= 1
+                        continue
+                    # 413: this single request exceeds the per-minute token limit; send less history.
+                    if exc.status_code == 413 and not shrunk_history and window:
+                        shrunk_history = True
+                        window = window_history(window, self.settings.groq_history_chars // 4)
+                        log.warning("request too large, retrying with %d history messages", len(window))
                         rounds -= 1
                         continue
                     raise

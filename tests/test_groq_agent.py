@@ -69,7 +69,7 @@ def test_tool_call_then_answer(memory):
     assert first["messages"][0] == {"role": "system", "content": "SYSTEM"}
     assert "<session_context>" in first["messages"][1]["content"]
     assert first["tools"][0]["type"] == "function"
-    assert first["reasoning_effort"] == "medium" and first["include_reasoning"] is False
+    assert first["reasoning_effort"] == "low" and first["include_reasoning"] is False
     second = requests[1]["messages"]
     assert second[2]["tool_calls"][0]["function"]["arguments"] == \
         '{"subject":"Networking","topic":"BGP","step":"AS basics"}'
@@ -140,3 +140,67 @@ def test_rate_limit_message(memory):
     agent, _ = make_agent(memory, [httpx.Response(429, json={"error": {"message": msg}})])
     events = run(agent, "s1", "hi")
     assert events[-1] == {"type": "error", "text": f"Groq rate limit reached: {msg}"}
+
+
+def test_window_history_starts_at_user_turn():
+    from app.groq_agent import window_history
+
+    history = [
+        {"role": "user", "content": "a" * 100},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "1"}]},
+        {"role": "tool", "tool_call_id": "1", "content": "x" * 50},
+        {"role": "assistant", "content": "b" * 100},
+        {"role": "user", "content": "c" * 100},
+        {"role": "assistant", "content": "d" * 100},
+    ]
+    assert window_history(history, 10_000) == history
+    # Budget covers the last few messages but not the first user turn: never start mid tool exchange
+    window = window_history(history, 400)
+    assert window[0]["role"] == "user" and window[0]["content"] == "c" * 100
+    assert window_history(history, 10) == []
+
+
+def test_only_recent_history_is_sent(memory):
+    agent, requests = make_agent(memory, [TEXT_TURN] * 6, groq_history_chars=600)
+    for i in range(5):
+        run(agent, "s1", f"question {i} " + "x" * 100)
+    sent = requests[-1]["messages"]
+    assert sent[0]["role"] == "system" and sent[1]["role"] == "user"
+    assert len(sent) < 1 + 2 * 5  # older turns dropped from the request
+    assert len(agent.visible_history("s1")) == 10  # but all turns are kept in storage
+
+
+def test_rate_limit_waits_and_retries(memory, monkeypatch):
+    import app.groq_agent as ga
+
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(ga.asyncio, "sleep", fake_sleep)
+    limited = httpx.Response(429, headers={"retry-after": "7"},
+                             json={"error": {"message": "Rate limit reached. Please try again in 6.5s."}})
+    agent, requests = make_agent(memory, [limited, TEXT_TURN])
+    events = run(agent, "s1", "hi")
+    assert {"type": "status", "text": "Groq free-plan limit, waiting 7s…"} in events
+    assert slept == [7.5] and events[-1]["type"] == "done"
+
+
+def test_long_rate_limit_reports_error(memory):
+    limited = httpx.Response(429, headers={"retry-after": "3600"},
+                             json={"error": {"message": "Rate limit reached on tokens per day (TPD)"}})
+    agent, _ = make_agent(memory, [limited])
+    events = run(agent, "s1", "hi")
+    assert events[-1]["type"] == "error" and "tokens per day" in events[-1]["text"]
+
+
+def test_request_too_large_retries_with_less_history(memory):
+    too_big = httpx.Response(413, json={"error": {"message": "Request too large ... (TPM): Limit 8000",
+                                                  "code": "rate_limit_exceeded"}})
+    agent, requests = make_agent(memory, [TEXT_TURN, TEXT_TURN, too_big, TEXT_TURN])
+    run(agent, "s1", "one " + "x" * 400)
+    run(agent, "s1", "two " + "x" * 400)
+    events = run(agent, "s1", "three")
+    assert events[-1]["type"] == "done"
+    assert len(requests[3]["messages"]) < len(requests[2]["messages"])

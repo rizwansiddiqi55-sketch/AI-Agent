@@ -19,8 +19,16 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-120b"
     # low | medium | high (only sent to reasoning models such as gpt-oss / qwen3)
-    groq_reasoning_effort: str | None = "medium"
-    groq_max_tokens: int = 8192
+    groq_reasoning_effort: str | None = "low"
+    # Output cap per reply (includes hidden reasoning). Voice replies are short.
+    groq_max_tokens: int = 2048
+    # Recent conversation sent per request, in characters (~4 chars per token). Keeps requests
+    # inside Groq's free-tier tokens-per-minute limit.
+    groq_history_chars: int = 6000
+    # Wait for a Groq rate limit if it clears within this many seconds; otherwise show the error.
+    groq_max_rate_limit_wait: float = 30
+    # Groq uses a condensed prompt to stay within free-tier limits; Claude uses the full one.
+    groq_system_prompt_path: str = str(ROOT_DIR / "prompts" / "compact_system_prompt.md")
     # Whisper model for server-side speech recognition (needs GROQ_API_KEY, any LLM provider)
     groq_stt_model: str = "whisper-large-v3"
 
