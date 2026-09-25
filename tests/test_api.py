@@ -39,3 +39,27 @@ def test_progress_endpoint(memory):
     data = client.get("/api/progress").json()
     assert data["progress"][0]["topic"] == "Present perfect"
     assert "Mastered" in data["levels"]
+
+
+def test_passcode_required_when_configured(memory, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setenv("APP_PASSCODE", "s3cret")
+    get_settings.cache_clear()
+    try:
+        client = make_client(memory, [])
+        assert client.get("/").status_code == 200  # the page itself stays public
+        assert client.get("/api/auth").status_code == 401
+        assert client.get("/api/modes", headers={"X-App-Passcode": "wrong"}).status_code == 401
+        assert client.get("/api/auth", headers={"X-App-Passcode": "s3cret"}).json() == {"ok": True}
+    finally:
+        get_settings.cache_clear()
+
+
+def test_api_locked_on_vercel_without_passcode(memory, monkeypatch):
+    import app.main as main
+
+    monkeypatch.setattr(main, "ON_VERCEL", True)
+    client = make_client(memory, [])
+    res = client.get("/api/modes")
+    assert res.status_code == 503 and "APP_PASSCODE" in res.json()["detail"]

@@ -1,19 +1,20 @@
 """FastAPI entry point: serves the voice UI and the streaming chat API."""
 
+import hmac
 import json
 import logging
 import os
-from contextlib import asynccontextmanager
+import threading
 from pathlib import Path
 
 import anthropic
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .agent import TutorAgent, load_system_prompt
-from .config import get_settings
+from .config import ON_VERCEL, get_settings
 from .memory import LEVELS, SUBJECTS, Memory
 from .modes import MODES
 
@@ -27,21 +28,42 @@ def create_agent() -> TutorAgent:
     if not (settings.anthropic_api_key or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
         logging.getLogger("tutor").warning(
             "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key.")
-    memory = Memory(settings.db_path)
+    memory = Memory(settings.memory_target)
     # api_key=None lets the SDK fall back to its own credential resolution
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     return TutorAgent(client, settings, memory, load_system_prompt(settings.system_prompt_path))
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    if not hasattr(app.state, "agent"):
-        app.state.agent = create_agent()
-    yield
+_agent_lock = threading.Lock()
 
 
-app = FastAPI(title="Rizwan's AI Voice Tutor", lifespan=lifespan)
+def get_agent(request: Request) -> TutorAgent:
+    """Create the agent on first use (works the same locally and on serverless platforms)."""
+    state = request.app.state
+    if not hasattr(state, "agent"):
+        with _agent_lock:
+            if not hasattr(state, "agent"):
+                state.agent = create_agent()
+    return state.agent
+
+
+app = FastAPI(title="Rizwan's AI Voice Tutor")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def require_passcode(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        passcode = get_settings().app_passcode
+        if passcode:
+            given = request.headers.get("x-app-passcode", "")
+            if not hmac.compare_digest(given.encode(), passcode.encode()):
+                return JSONResponse({"detail": "passcode required"}, status_code=401)
+        elif ON_VERCEL:
+            # Never expose the API (and the Anthropic key's credit) publicly without a passcode.
+            return JSONResponse({"detail": "Set APP_PASSCODE in the Vercel project settings."},
+                                status_code=503)
+    return await call_next(request)
 
 
 class ChatRequest(BaseModel):
@@ -60,6 +82,12 @@ async def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/api/auth")
+async def auth():
+    """Lets the UI check a passcode (the middleware does the actual check)."""
+    return {"ok": True}
+
+
 @app.get("/api/modes")
 async def modes():
     return {key: m["label"] for key, m in MODES.items()}
@@ -67,7 +95,7 @@ async def modes():
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest, request: Request):
-    agent: TutorAgent = request.app.state.agent
+    agent = get_agent(request)
 
     async def event_stream():
         async for event in agent.run_turn(req.session_id, req.text, req.mode, req.urdu_voice):
@@ -81,7 +109,7 @@ async def chat(req: ChatRequest, request: Request):
 
 @app.get("/api/progress")
 async def progress(request: Request):
-    memory: Memory = request.app.state.agent.memory
+    memory: Memory = get_agent(request).memory
     return {
         "subjects": SUBJECTS,
         "levels": LEVELS,
@@ -95,7 +123,7 @@ async def progress(request: Request):
 @app.get("/api/history")
 async def history(request: Request, session_id: str = "default"):
     """Visible transcript (text only) for restoring the UI after a reload."""
-    memory: Memory = request.app.state.agent.memory
+    memory: Memory = get_agent(request).memory
     items = []
     for m in memory.get_history(session_id):
         texts = [b["text"] for b in m["content"] if isinstance(b, dict) and b.get("type") == "text"]
@@ -108,5 +136,5 @@ async def history(request: Request, session_id: str = "default"):
 
 @app.post("/api/reset")
 async def reset(req: ResetRequest, request: Request):
-    request.app.state.agent.memory.clear_history(req.session_id)
+    get_agent(request).memory.clear_history(req.session_id)
     return {"ok": True}

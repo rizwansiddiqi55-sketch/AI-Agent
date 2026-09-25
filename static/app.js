@@ -11,6 +11,30 @@ if (!sessionId) {
 }
 
 const $ = (id) => document.getElementById(id);
+
+// ---------- API with passcode ----------
+let passcode = storageGet("tutor.passcode") || "";
+
+async function api(path, options = {}) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(path, {
+      ...options,
+      headers: { ...(options.headers || {}), "X-App-Passcode": passcode },
+    });
+    if (res.status !== 401) {
+      if (res.status === 503) {
+        const body = await res.clone().json().catch(() => ({}));
+        if (body.detail) addMessage("error", body.detail);
+      }
+      return res;
+    }
+    const entered = window.prompt(attempt ? "Wrong passcode. Try again:" : "Enter your tutor passcode:");
+    if (entered === null) return res;
+    passcode = entered.trim();
+    storageSet("tutor.passcode", passcode);
+  }
+  return fetch(path, options);
+}
 const transcript = $("transcript");
 const statusEl = $("status");
 const textInput = $("textInput");
@@ -232,7 +256,7 @@ async function send(text, mode = null) {
   const chunker = new SpeechChunker();
 
   try {
-    const res = await fetch("/api/chat", {
+    const res = await api("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, mode, session_id: sessionId, urdu_voice: tts.hasUrdu() }),
@@ -287,7 +311,8 @@ stopBtn.addEventListener("click", () => tts.cancel());
 
 // ---------- Modes ----------
 async function loadModes() {
-  const res = await fetch("/api/modes");
+  const res = await api("/api/modes");
+  if (!res.ok) return;
   const modes = await res.json();
   const nav = $("modes");
   for (const [key, label] of Object.entries(modes)) {
@@ -305,7 +330,8 @@ async function loadModes() {
 
 // ---------- Progress panel ----------
 async function loadProgress() {
-  const res = await fetch("/api/progress");
+  const res = await api("/api/progress");
+  if (!res.ok) return;
   const data = await res.json();
   const body = $("progressBody");
   const lesson = data.current_lesson;
@@ -336,7 +362,7 @@ $("closePanel").addEventListener("click", () => { $("progressPanel").hidden = tr
 $("resetBtn").addEventListener("click", async () => {
   if (!confirm("Start a new conversation? Your progress, notes and lesson position are kept.")) return;
   tts.cancel();
-  await fetch("/api/reset", {
+  await api("/api/reset", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId }),
   });
@@ -346,10 +372,11 @@ $("resetBtn").addEventListener("click", async () => {
 
 // ---------- Restore transcript ----------
 async function loadHistory() {
-  const res = await fetch(`/api/history?session_id=${encodeURIComponent(sessionId)}`);
+  const res = await api(`/api/history?session_id=${encodeURIComponent(sessionId)}`);
+  if (!res.ok) return;
   const data = await res.json();
   for (const m of data.messages) addMessage(m.role, m.text);
 }
 
-loadModes();
-loadHistory();
+// Modes first so a passcode prompt appears once, then the transcript.
+loadModes().then(loadHistory);

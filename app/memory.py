@@ -4,6 +4,7 @@ import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
+from typing import Any
 
 LEVELS = ["Not Started", "Beginner", "Developing", "Intermediate", "Advanced", "Mastered"]
 SUBJECTS = ["AI", "Python", "Networking", "Cybersecurity", "English"]
@@ -24,9 +25,10 @@ DEFAULT_PROFILE = {
     "languages": ["English", "Urdu", "Roman Urdu"],
 }
 
+# Written once for both backends; {id} becomes the dialect's auto-increment key.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id {id},
     session_id TEXT NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
@@ -42,7 +44,7 @@ CREATE TABLE IF NOT EXISTS progress (
     PRIMARY KEY (subject, topic)
 );
 CREATE TABLE IF NOT EXISTS notes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id {id},
     topic TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -55,7 +57,7 @@ CREATE TABLE IF NOT EXISTS current_lesson (
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS english_corrections (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id {id},
     original TEXT NOT NULL,
     corrected TEXT NOT NULL,
     rule TEXT NOT NULL,
@@ -72,25 +74,88 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-class Memory:
-    def __init__(self, db_path: str):
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
-        with self._lock, self._conn:
-            self._conn.executescript(SCHEMA)
-            self._conn.execute(
-                "INSERT OR IGNORE INTO profile (id, data) VALUES (1, ?)",
-                (json.dumps(DEFAULT_PROFILE),),
-            )
+class _SqliteBackend:
+    param = "?"
+    id_type = "INTEGER PRIMARY KEY AUTOINCREMENT"
 
-    def _query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+    def __init__(self, path: str):
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+
+    def query(self, sql: str, params: tuple) -> list[dict]:
+        return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def execute(self, sql: str, params_list: list[tuple]) -> None:
+        with self._conn:
+            self._conn.executemany(sql, params_list)
+
+    def executescript(self, script: str) -> None:
+        with self._conn:
+            self._conn.executescript(script)
+
+
+class _PostgresBackend:
+    param = "%s"
+    id_type = "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY"
+
+    def __init__(self, url: str):
+        import psycopg
+        from psycopg.rows import dict_row
+
+        self._psycopg = psycopg
+        self._connect = lambda: psycopg.connect(url, autocommit=True, row_factory=dict_row,
+                                                prepare_threshold=None)
+        self._conn = self._connect()
+
+    def _run(self, fn):
+        # Serverless databases close idle connections; reconnect once on failure.
+        try:
+            return fn(self._conn)
+        except self._psycopg.OperationalError:
+            self._conn = self._connect()
+            return fn(self._conn)
+
+    def query(self, sql: str, params: tuple) -> list[dict]:
+        return self._run(lambda c: c.execute(sql, params).fetchall())
+
+    def execute(self, sql: str, params_list: list[tuple]) -> None:
+        def run(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.executemany(sql, params_list)
+        self._run(run)
+
+    def executescript(self, script: str) -> None:
+        self._run(lambda c: c.execute(script))
+
+
+class Memory:
+    """Long-term memory. `target` is a SQLite file path or a postgres:// URL."""
+
+    def __init__(self, target: str):
+        if target.startswith(("postgres://", "postgresql://")):
+            self._db: Any = _PostgresBackend(target)
+        else:
+            self._db = _SqliteBackend(target)
+        self._lock = threading.Lock()
+        self._db.executescript(SCHEMA.replace("{id}", self._db.id_type))
+        self._execute(
+            "INSERT INTO profile (id, data) VALUES (1, ?) ON CONFLICT (id) DO NOTHING",
+            (json.dumps(DEFAULT_PROFILE),),
+        )
+
+    def _sql(self, sql: str) -> str:
+        return sql.replace("?", self._db.param)
+
+    def _query(self, sql: str, params: tuple = ()) -> list[dict]:
         with self._lock:
-            return self._conn.execute(sql, params).fetchall()
+            return self._db.query(self._sql(sql), params)
 
     def _execute(self, sql: str, params: tuple = ()) -> None:
-        with self._lock, self._conn:
-            self._conn.execute(sql, params)
+        self._executemany(sql, [params])
+
+    def _executemany(self, sql: str, params_list: list[tuple]) -> None:
+        with self._lock:
+            self._db.execute(self._sql(sql), params_list)
 
     # Conversation history (append-only per session)
     def get_history(self, session_id: str) -> list[dict]:
@@ -100,11 +165,10 @@ class Memory:
         return [{"role": r["role"], "content": json.loads(r["content"])} for r in rows]
 
     def append_messages(self, session_id: str, messages: list[dict]) -> None:
-        with self._lock, self._conn:
-            self._conn.executemany(
-                "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-                [(session_id, m["role"], json.dumps(m["content"]), _now()) for m in messages],
-            )
+        self._executemany(
+            "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+            [(session_id, m["role"], json.dumps(m["content"]), _now()) for m in messages],
+        )
 
     def clear_history(self, session_id: str) -> None:
         self._execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
@@ -130,7 +194,7 @@ class Memory:
         rows = self._query(
             "SELECT subject, topic, level, evidence, updated_at FROM progress ORDER BY subject, topic"
         )
-        return [dict(r) for r in rows]
+        return rows
 
     # Notes
     def save_note(self, topic: str, content: str) -> None:
@@ -142,7 +206,7 @@ class Memory:
     def get_notes(self, topic: str | None = None, limit: int = 20) -> list[dict]:
         if topic:
             rows = self._query(
-                "SELECT topic, content, created_at FROM notes WHERE topic LIKE ? "
+                "SELECT topic, content, created_at FROM notes WHERE LOWER(topic) LIKE LOWER(?) "
                 "ORDER BY id DESC LIMIT ?",
                 (f"%{topic}%", limit),
             )
@@ -150,7 +214,7 @@ class Memory:
             rows = self._query(
                 "SELECT topic, content, created_at FROM notes ORDER BY id DESC LIMIT ?", (limit,)
             )
-        return [dict(r) for r in rows]
+        return rows
 
     # Current lesson (for "Continue my course")
     def set_current_lesson(self, subject: str, topic: str, step: str) -> None:
@@ -164,7 +228,7 @@ class Memory:
 
     def get_current_lesson(self) -> dict | None:
         rows = self._query("SELECT subject, topic, step, updated_at FROM current_lesson WHERE id = 1")
-        return dict(rows[0]) if rows else None
+        return rows[0] if rows else None
 
     # English corrections
     def log_english_correction(self, original: str, corrected: str, rule: str) -> None:
@@ -180,4 +244,4 @@ class Memory:
             "ORDER BY id DESC LIMIT ?",
             (limit,),
         )
-        return [dict(r) for r in rows]
+        return rows

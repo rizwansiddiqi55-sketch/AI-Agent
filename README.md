@@ -36,6 +36,15 @@ Open **http://localhost:8000** in Chrome or Edge and allow microphone access.
 
 > To use it from your phone on the same Wi-Fi, run `uvicorn app.main:app --host 0.0.0.0`. Note that browsers only allow the microphone on `localhost` or HTTPS, so for phone use put it behind HTTPS (for example a tunnel such as `cloudflared` or `ngrok`, or a small cloud deployment).
 
+### Deploy on Vercel
+
+The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `app/main.py`, and `vercel.json` allows responses of up to 5 minutes.
+
+1. Import the GitHub repo into Vercel.
+2. **Project → Settings → Environment Variables**: add `ANTHROPIC_API_KEY` and `APP_PASSCODE`. Without `APP_PASSCODE`, the API refuses all requests on Vercel, so nobody else can spend your API credit.
+3. **Project → Storage → Create Database → Neon (Postgres)**: connect it to the project. This sets `DATABASE_URL`, which keeps your progress and notes permanently. Without it the app uses a temporary SQLite file in `/tmp` that resets often.
+4. Redeploy. Open the site, and enter the passcode once per browser when asked.
+
 ### Configuration (`.env`)
 
 | Variable | Default | Purpose |
@@ -44,7 +53,9 @@ Open **http://localhost:8000** in Chrome or Edge and allow microphone access.
 | `CLAUDE_MODEL` | `claude-opus-5` | Claude model |
 | `EFFORT` | `medium` | `low` / `medium` / `high` / `xhigh` / `max`. Lower is faster and cheaper; higher gives deeper reasoning |
 | `ENABLE_FALLBACK` | `true` | Server-side refusal fallback (Anthropic beta) |
+| `DATABASE_URL` | – | Postgres URL (e.g. Neon). Used instead of SQLite when set |
 | `DB_PATH` | `tutor.db` | SQLite file for memory |
+| `APP_PASSCODE` | – | If set, the API requires this passcode. Required on Vercel |
 | `MAX_HISTORY_MESSAGES` | `80` | After this many messages the chat starts fresh. Progress, notes, and lesson position are kept |
 
 ## Using it
@@ -70,8 +81,10 @@ Example things to say:
 ## Development
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 pytest
+# optional: also run the memory tests against Postgres
+TEST_DATABASE_URL=postgresql://user@localhost/test pytest
 ```
 
 The tests use a fake Claude client, so they need no API key or network.
@@ -81,7 +94,7 @@ app/
   main.py      FastAPI routes: UI, /api/chat (SSE), /api/progress, /api/history, /api/reset
   agent.py     Claude streaming + tool loop, prompt caching, refusal handling
   tools.py     memory tool schemas, validation, execution
-  memory.py    SQLite storage (history, progress, notes, lesson, corrections, profile)
+  memory.py    SQLite / Postgres storage (history, progress, notes, lesson, corrections, profile)
   modes.py     quick learning-mode commands
   config.py    settings from .env
 prompts/master_system_prompt.md   the tutor's personality and teaching rules

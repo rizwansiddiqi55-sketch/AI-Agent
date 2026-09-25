@@ -1,3 +1,4 @@
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -53,6 +54,17 @@ class FakeClient:
         return FakeStream(texts, SimpleNamespace(content=blocks, stop_reason=stop, usage=usage))
 
 
-@pytest.fixture
-def memory(tmp_path):
+# Set TEST_DATABASE_URL=postgresql://... to also run the memory tests against Postgres.
+PG_URL = os.environ.get("TEST_DATABASE_URL")
+TABLES = "messages, progress, notes, current_lesson, english_corrections, profile"
+
+
+@pytest.fixture(params=["sqlite"] + (["postgres"] if PG_URL else []))
+def memory(request, tmp_path):
+    if request.param == "postgres":
+        import psycopg
+
+        with psycopg.connect(PG_URL, autocommit=True) as conn:
+            conn.execute(f"DROP TABLE IF EXISTS {TABLES}")
+        return Memory(PG_URL)
     return Memory(str(tmp_path / "test.db"))
