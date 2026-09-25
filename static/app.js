@@ -278,7 +278,8 @@ class SpeechChunker {
 // Preferred: record audio and transcribe on the server with Groq Whisper (works on iPhone
 // Safari and handles Urdu well). Fallback: the browser's own SpeechRecognition.
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-const CAN_RECORD = !!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+const CAN_RECORD = !!(AudioCtx && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 let micMode = CAN_RECORD ? "server" : SR ? "browser" : "none";
 let listening = false;
 let transcribing = false;
@@ -299,61 +300,99 @@ function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
   tts.unlock();
+  if (CAN_RECORD) recorder.ensureContext();
   if (window.speechSynthesis) {
     try { speechSynthesis.speak(new SpeechSynthesisUtterance("")); } catch { /* ignore */ }
   }
 }
 
 // --- Server (Whisper) recorder with automatic end-of-speech detection ---
-const recorder = {
-  audioCtx: null, stream: null, rec: null, chunks: [], timer: null, cancelled: false, discard: false,
+// Captures raw audio with Web Audio and encodes a 16 kHz mono WAV in the page. (Safari's
+// MediaRecorder MP4 output is sometimes rejected by Whisper; WAV is always accepted.)
+const TARGET_RATE = 16000;
 
-  pickMime() {
-    const types = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus"];
-    return types.find((t) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+function encodeWav(chunks, inputRate) {
+  let length = 0;
+  for (const c of chunks) length += c.length;
+  const ratio = inputRate / TARGET_RATE;
+  const outLength = Math.floor(length / ratio);
+  const pcm = new Int16Array(outLength);
+  // Merge + downsample by averaging each output window
+  let chunkIdx = 0, offset = 0;
+  const readSample = () => {
+    while (chunkIdx < chunks.length && offset >= chunks[chunkIdx].length) { chunkIdx++; offset = 0; }
+    return chunkIdx < chunks.length ? chunks[chunkIdx][offset++] : 0;
+  };
+  let consumed = 0;
+  for (let i = 0; i < outLength; i++) {
+    const until = Math.floor((i + 1) * ratio);
+    let sum = 0, n = 0;
+    while (consumed < until) { sum += readSample(); n++; consumed++; }
+    const v = Math.max(-1, Math.min(1, n ? sum / n : 0));
+    pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+  }
+  const buf = new ArrayBuffer(44 + pcm.length * 2);
+  const view = new DataView(buf);
+  const str = (o, t) => [...t].forEach((ch, i) => view.setUint8(o + i, ch.charCodeAt(0)));
+  str(0, "RIFF"); view.setUint32(4, 36 + pcm.length * 2, true); str(8, "WAVEfmt ");
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, TARGET_RATE, true); view.setUint32(28, TARGET_RATE * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true); str(36, "data");
+  view.setUint32(40, pcm.length * 2, true);
+  new Int16Array(buf, 44).set(pcm);
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+const recorder = {
+  audioCtx: null, stream: null, source: null, processor: null, chunks: [], timer: null,
+  cancelled: false, discard: false, active: false, rms: 0,
+
+  ensureContext() {
+    this.audioCtx = this.audioCtx || new AudioCtx();
+    if (this.audioCtx.state === "suspended") this.audioCtx.resume().catch(() => {});
+    return this.audioCtx;
   },
 
   async start() {
+    const ctx = this.ensureContext();  // created/resumed while still inside the tap on iOS
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
       });
     } catch (err) {
       setStatus(err.name === "NotAllowedError" ? "Microphone permission denied. Allow it in your browser settings." : `Mic error: ${err.message}`);
       return;
     }
-    const mime = this.pickMime();
-    this.rec = new MediaRecorder(this.stream, mime ? { mimeType: mime } : undefined);
+    if (ctx.state === "suspended") await ctx.resume().catch(() => {});
     this.chunks = [];
     this.cancelled = false;
-    this.rec.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
-    this.rec.onstop = () => this.finish();
-    this.rec.start(250);
+    this.discard = false;
+    this.active = true;
+    this.rms = 0;
+    this.source = ctx.createMediaStreamSource(this.stream);
+    this.processor = ctx.createScriptProcessor(4096, 1, 1);
+    this.processor.onaudioprocess = (e) => {
+      if (!this.active) return;
+      const input = e.inputBuffer.getChannelData(0);
+      this.chunks.push(new Float32Array(input));
+      let sum = 0;
+      for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
+      this.rms = Math.sqrt(sum / input.length);
+    };
+    this.source.connect(this.processor);
+    this.processor.connect(ctx.destination);  // needed for onaudioprocess to fire; outputs silence
     setListeningUI(true);
     this.watchSilence();
   },
 
   watchSilence() {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    this.audioCtx = this.audioCtx || new Ctx();
-    if (this.audioCtx.state === "suspended") this.audioCtx.resume().catch(() => {});
-    const source = this.audioCtx.createMediaStreamSource(this.stream);
-    const analyser = this.audioCtx.createAnalyser();
-    analyser.fftSize = 1024;
-    source.connect(analyser);
-    const buf = new Float32Array(analyser.fftSize);
     const started = Date.now();
     let heardSpeech = false;
     let lastLoud = Date.now();
     this.timer = setInterval(() => {
-      analyser.getFloatTimeDomainData(buf);
-      let sum = 0;
-      for (const v of buf) sum += v * v;
-      const rms = Math.sqrt(sum / buf.length);
-      call.setLevel(rms);
       const now = Date.now();
-      if (rms > 0.02) { heardSpeech = true; lastLoud = now; }
+      call.setLevel(this.rms);
+      if (this.rms > 0.02) { heardSpeech = true; lastLoud = now; }
       if (heardSpeech && now - lastLoud > 1500) this.stop();          // paused after speaking
       else if (!heardSpeech && now - started > 8000) this.stop(true);  // nothing said
       else if (now - started > 60000) this.stop();                      // hard limit
@@ -361,27 +400,33 @@ const recorder = {
   },
 
   stop(cancel = false) {
+    if (!this.active) return;
     this.cancelled = this.cancelled || cancel;
+    this.active = false;
     clearInterval(this.timer);
-    if (this.rec && this.rec.state !== "inactive") this.rec.stop();
+    try { this.source.disconnect(); this.processor.disconnect(); } catch { /* ignore */ }
+    this.processor.onaudioprocess = null;
+    this.stream.getTracks().forEach((t) => t.stop());
+    this.finish();
   },
 
   async finish() {
-    this.stream.getTracks().forEach((t) => t.stop());
     setListeningUI(false);
     if (this.discard) { this.discard = false; return; }
-    const type = (this.rec.mimeType || "audio/webm").split(";")[0];
-    const blob = new Blob(this.chunks, { type });
-    if (this.cancelled || blob.size < 2000) {
+    const rate = this.audioCtx.sampleRate;
+    const samples = this.chunks.reduce((n, c) => n + c.length, 0);
+    if (this.cancelled || samples < rate * 0.4) {
       setStatus(this.cancelled ? "Didn't hear anything. Tap the mic and try again." : "");
       return;
     }
+    const blob = encodeWav(this.chunks, rate);
+    this.chunks = [];
     setStatus("Transcribing…");
     transcribing = true;
     call.update();
     try {
       const res = await api(`/api/transcribe?lang=${whisperLang()}`, {
-        method: "POST", headers: { "Content-Type": type }, body: blob,
+        method: "POST", headers: { "Content-Type": "audio/wav" }, body: blob,
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 501 && SR) {
