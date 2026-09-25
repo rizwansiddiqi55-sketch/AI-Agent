@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     # low | medium | high (only sent to reasoning models such as gpt-oss / qwen3)
     groq_reasoning_effort: str | None = "medium"
     groq_max_tokens: int = 8192
+    # Whisper model for server-side speech recognition (needs GROQ_API_KEY, any LLM provider)
+    groq_stt_model: str = "whisper-large-v3"
 
     # Anthropic (Claude)
     anthropic_api_key: str | None = None

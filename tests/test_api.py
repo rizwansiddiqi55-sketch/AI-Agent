@@ -82,3 +82,52 @@ def test_create_agent_picks_provider(tmp_path, monkeypatch):
         assert isinstance(create_agent(), TutorAgent)
     finally:
         get_settings.cache_clear()
+
+
+class FakeTranscriptions:
+    def __init__(self):
+        self.calls = []
+
+    async def create(self, **kwargs):
+        from types import SimpleNamespace
+        self.calls.append(kwargs)
+        return SimpleNamespace(text="  OSPF mujhe samjhao  ")
+
+
+def test_transcribe_endpoint(memory, monkeypatch):
+    from types import SimpleNamespace
+
+    import app.main as main
+    from app.config import get_settings
+
+    fake = FakeTranscriptions()
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+    get_settings.cache_clear()
+    monkeypatch.setattr(main, "_stt_client", SimpleNamespace(audio=SimpleNamespace(transcriptions=fake)))
+    try:
+        client = make_client(memory, [])
+        res = client.post("/api/transcribe?lang=ur", content=b"x" * 5000,
+                          headers={"Content-Type": "audio/mp4"})
+        assert res.json() == {"text": "OSPF mujhe samjhao"}
+        call = fake.calls[0]
+        assert call["language"] == "ur" and call["model"] == "whisper-large-v3"
+        assert call["file"][0] == "speech.m4a" and len(call["file"][1]) == 5000
+        # unknown language is not forwarded; empty audio rejected; oversized audio rejected
+        client.post("/api/transcribe?lang=xx", content=b"x" * 10, headers={"Content-Type": "audio/webm"})
+        assert "language" not in fake.calls[1]
+        assert client.post("/api/transcribe", content=b"").status_code == 400
+        assert client.post("/api/transcribe", content=b"x" * (4 * 1024 * 1024 + 1)).status_code == 413
+    finally:
+        get_settings.cache_clear()
+
+
+def test_transcribe_without_groq_key(memory, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    get_settings.cache_clear()
+    try:
+        client = make_client(memory, [])
+        assert client.post("/api/transcribe", content=b"x" * 5000).status_code == 501
+    finally:
+        get_settings.cache_clear()

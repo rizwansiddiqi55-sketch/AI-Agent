@@ -21,6 +21,7 @@ from .groq_agent import GroqTutorAgent
 from .config import ON_VERCEL, get_settings
 from .memory import LEVELS, SUBJECTS, Memory
 from .modes import MODES
+from .stt import TranscriptionError, transcribe
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -116,6 +117,27 @@ async def chat(req: ChatRequest, request: Request):
 
     return StreamingResponse(event_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+_stt_client: groq.AsyncGroq | None = None
+
+
+@app.post("/api/transcribe")
+async def transcribe_audio(request: Request, lang: str | None = None):
+    """Speech-to-text with Groq Whisper. Body: raw audio bytes (webm/mp4/ogg/wav)."""
+    global _stt_client
+    settings = get_settings()
+    if not settings.groq_api_key:
+        return JSONResponse({"detail": "Server speech recognition needs GROQ_API_KEY."}, status_code=501)
+    if _stt_client is None:
+        _stt_client = groq.AsyncGroq(api_key=settings.groq_api_key)
+    audio = await request.body()
+    try:
+        text = await transcribe(_stt_client, audio, request.headers.get("content-type", ""),
+                                lang, settings.groq_stt_model)
+    except TranscriptionError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+    return {"text": text}
 
 
 @app.get("/api/progress")

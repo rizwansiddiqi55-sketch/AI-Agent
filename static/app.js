@@ -131,7 +131,7 @@ const tts = {
   },
   onIdle() {
     stopBtn.hidden = true;
-    if (handsFree.checked && !busy && recognition) startListening();
+    if (handsFree.checked && !busy) startListening();
   },
 };
 if (window.speechSynthesis) {
@@ -183,17 +183,130 @@ class SpeechChunker {
   }
 }
 
-// ---------- Speech recognition ----------
+// ---------- Speech input ----------
+// Preferred: record audio and transcribe on the server with Groq Whisper (works on iPhone
+// Safari and handles Urdu well). Fallback: the browser's own SpeechRecognition.
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition = null;
+const CAN_RECORD = !!(window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+let micMode = CAN_RECORD ? "server" : SR ? "browser" : "none";
 let listening = false;
 
+function whisperLang() { return recogLang.startsWith("ur") ? "ur" : "en"; }
+
+function setListeningUI(on, label = "Listening…") {
+  listening = on;
+  micBtn.classList.toggle("listening", on);
+  if (on) setStatus(label);
+  else if (statusEl.textContent === label) setStatus("");
+}
+
+// iOS only allows speech output after it has been started from a tap once.
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked || !window.speechSynthesis) return;
+  audioUnlocked = true;
+  try { speechSynthesis.speak(new SpeechSynthesisUtterance("")); } catch { /* ignore */ }
+}
+
+// --- Server (Whisper) recorder with automatic end-of-speech detection ---
+const recorder = {
+  audioCtx: null, stream: null, rec: null, chunks: [], timer: null, cancelled: false,
+
+  pickMime() {
+    const types = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus"];
+    return types.find((t) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+  },
+
+  async start() {
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (err) {
+      setStatus(err.name === "NotAllowedError" ? "Microphone permission denied. Allow it in your browser settings." : `Mic error: ${err.message}`);
+      return;
+    }
+    const mime = this.pickMime();
+    this.rec = new MediaRecorder(this.stream, mime ? { mimeType: mime } : undefined);
+    this.chunks = [];
+    this.cancelled = false;
+    this.rec.ondataavailable = (e) => { if (e.data && e.data.size) this.chunks.push(e.data); };
+    this.rec.onstop = () => this.finish();
+    this.rec.start(250);
+    setListeningUI(true);
+    this.watchSilence();
+  },
+
+  watchSilence() {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    this.audioCtx = this.audioCtx || new Ctx();
+    if (this.audioCtx.state === "suspended") this.audioCtx.resume().catch(() => {});
+    const source = this.audioCtx.createMediaStreamSource(this.stream);
+    const analyser = this.audioCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    const started = Date.now();
+    let heardSpeech = false;
+    let lastLoud = Date.now();
+    this.timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (const v of buf) sum += v * v;
+      const rms = Math.sqrt(sum / buf.length);
+      const now = Date.now();
+      if (rms > 0.02) { heardSpeech = true; lastLoud = now; }
+      if (heardSpeech && now - lastLoud > 1500) this.stop();          // paused after speaking
+      else if (!heardSpeech && now - started > 8000) this.stop(true);  // nothing said
+      else if (now - started > 60000) this.stop();                      // hard limit
+    }, 100);
+  },
+
+  stop(cancel = false) {
+    this.cancelled = this.cancelled || cancel;
+    clearInterval(this.timer);
+    if (this.rec && this.rec.state !== "inactive") this.rec.stop();
+  },
+
+  async finish() {
+    this.stream.getTracks().forEach((t) => t.stop());
+    setListeningUI(false);
+    const type = (this.rec.mimeType || "audio/webm").split(";")[0];
+    const blob = new Blob(this.chunks, { type });
+    if (this.cancelled || blob.size < 2000) {
+      setStatus(this.cancelled ? "Didn't hear anything. Tap the mic and try again." : "");
+      return;
+    }
+    setStatus("Transcribing…");
+    try {
+      const res = await api(`/api/transcribe?lang=${whisperLang()}`, {
+        method: "POST", headers: { "Content-Type": type }, body: blob,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 501 && SR) {
+        micMode = "browser";
+        setStatus("Server speech recognition unavailable; using the browser's. Tap the mic again.");
+        return;
+      }
+      if (!res.ok) { setStatus(data.detail || `Speech recognition failed (${res.status}).`); return; }
+      setStatus("");
+      if (data.text) send(data.text);
+      else setStatus("Didn't catch that. Try again.");
+    } catch (err) {
+      setStatus(`Speech recognition failed: ${err.message}`);
+    }
+  },
+};
+
+// --- Browser SpeechRecognition fallback ---
+let recognition = null;
 if (SR) {
   recognition = new SR();
   recognition.interimResults = true;
   recognition.continuous = false;
   let finalText = "";
-  recognition.onstart = () => { listening = true; finalText = ""; micBtn.classList.add("listening"); setStatus("Listening…"); };
+  recognition.onstart = () => { finalText = ""; setListeningUI(true); };
   recognition.onresult = (e) => {
     let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -208,27 +321,37 @@ if (SR) {
     else if (e.error !== "no-speech" && e.error !== "aborted") setStatus(`Mic error: ${e.error}`);
   };
   recognition.onend = () => {
-    listening = false;
-    micBtn.classList.remove("listening");
-    if (statusEl.textContent === "Listening…") setStatus("");
+    setListeningUI(false);
     const text = textInput.value.trim();
     if (text) send(text);
   };
-} else {
+}
+
+if (micMode === "none") {
   micBtn.disabled = true;
   $("micHint").hidden = false;
 }
 
 function startListening() {
-  if (!recognition || listening || busy) return;
+  if (listening || busy || micMode === "none") return;
   tts.cancel();
   textInput.value = "";
-  recognition.lang = recogLang;
-  try { recognition.start(); } catch { /* already started */ }
+  if (micMode === "server") {
+    recorder.start();
+  } else {
+    recognition.lang = recogLang;
+    try { recognition.start(); } catch { /* already started */ }
+  }
+}
+
+function stopListening() {
+  if (micMode === "server") recorder.stop();
+  else if (recognition) recognition.stop();
 }
 
 micBtn.addEventListener("click", () => {
-  if (listening) recognition.stop();
+  unlockAudio();
+  if (listening) stopListening();
   else startListening();
 });
 
@@ -304,7 +427,8 @@ async function send(text, mode = null) {
 
 $("form").addEventListener("submit", (e) => {
   e.preventDefault();
-  if (listening) recognition.stop();
+  unlockAudio();
+  if (listening) stopListening();
   else send(textInput.value);
 });
 stopBtn.addEventListener("click", () => tts.cancel());
@@ -321,6 +445,7 @@ async function loadModes() {
     b.className = "chip";
     b.textContent = label;
     b.addEventListener("click", () => {
+      unlockAudio();
       const extra = textInput.value.trim();
       send(extra ? `${label}: ${extra}` : label, key);
     });
