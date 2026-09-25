@@ -63,3 +63,22 @@ def test_api_locked_on_vercel_without_passcode(memory, monkeypatch):
     client = make_client(memory, [])
     res = client.get("/api/modes")
     assert res.status_code == 503 and "APP_PASSCODE" in res.json()["detail"]
+
+
+def test_create_agent_picks_provider(tmp_path, monkeypatch):
+    from app.config import get_settings
+    from app.groq_agent import GroqTutorAgent
+    from app.main import create_agent
+
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "p.db"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("POSTGRES_URL", raising=False)
+    try:
+        get_settings.cache_clear()
+        assert isinstance(create_agent(), GroqTutorAgent)
+        monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+        get_settings.cache_clear()
+        assert isinstance(create_agent(), TutorAgent)
+    finally:
+        get_settings.cache_clear()

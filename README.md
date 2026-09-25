@@ -10,14 +10,15 @@ The tutor's behaviour comes from the master system prompt in [`prompts/master_sy
 
 ```
 Browser mic ── Web Speech API (en-US / ur-PK) ──► text
-   └─► POST /api/chat (streaming) ──► FastAPI ──► Claude (Anthropic API)
+   └─► POST /api/chat (streaming) ──► FastAPI ──► Groq (default) or Claude
                                          │  tools: progress, lesson, notes, English corrections
-                                         └─► SQLite (tutor.db)
+                                         └─► Postgres (Neon) or SQLite
    ◄── streamed reply ── shown on screen + read aloud sentence by sentence (speechSynthesis)
 ```
 
 - **Speech-to-text and text-to-speech run in the browser** (Web Speech API), so they are free and need no extra keys. Use **Chrome or Edge** for voice input. Code blocks and CLI commands appear on screen but are not read aloud.
-- **Claude** powers the tutor through the official `anthropic` Python SDK. It streams replies and uses adaptive thinking. The long system prompt is cached (prompt caching) so every turn stays fast and cheap. Server-side refusal fallback is turned on by default.
+- **Groq** powers the tutor by default, through the official `groq` Python SDK. The default model is `openai/gpt-oss-120b`, which is fast, good at tool calling, and multilingual. Replies stream and the model's reasoning is hidden. You can change the model with `GROQ_MODEL`.
+- **Claude** is also supported. Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` to use it instead. It uses the official `anthropic` SDK with adaptive thinking and prompt caching. Each provider keeps its own conversation history. Progress, notes, and lesson position are shared.
 - **Memory tools** let the tutor save and read its own progress data: `update_progress`, `set_current_lesson` / `get_current_lesson`, `save_note` / `get_notes`, `log_english_correction`, and `get_learner_profile`.
 
 ## Setup
@@ -28,7 +29,7 @@ Requires Python 3.10+.
 git clone <this repo> && cd AI-Agent
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env                                   # then add your ANTHROPIC_API_KEY
+cp .env.example .env                                   # then add your GROQ_API_KEY
 uvicorn app.main:app --reload
 ```
 
@@ -41,7 +42,7 @@ Open **http://localhost:8000** in Chrome or Edge and allow microphone access.
 The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `app/main.py`, and `vercel.json` allows responses of up to 5 minutes.
 
 1. Import the GitHub repo into Vercel.
-2. **Project → Settings → Environment Variables**: add `ANTHROPIC_API_KEY` and `APP_PASSCODE`. Without `APP_PASSCODE`, the API refuses all requests on Vercel, so nobody else can spend your API credit.
+2. **Project → Settings → Environment Variables**: add `GROQ_API_KEY` and `APP_PASSCODE`. Without `APP_PASSCODE`, the API refuses all requests on Vercel, so nobody else can spend your API credit.
 3. **Project → Storage → Create Database → Neon (Postgres)**: connect it to the project. This sets `DATABASE_URL`, which keeps your progress and notes permanently. Without it the app uses a temporary SQLite file in `/tmp` that resets often.
 4. Redeploy. Open the site, and enter the passcode once per browser when asked.
 
@@ -49,10 +50,14 @@ The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | – | Your Anthropic API key (required) |
+| `LLM_PROVIDER` | `groq` | `groq` or `anthropic` |
+| `GROQ_API_KEY` | – | Your Groq API key (from console.groq.com/keys) |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Any Groq chat model that supports tool calling, e.g. `llama-3.3-70b-versatile` |
+| `GROQ_REASONING_EFFORT` | `medium` | `low` / `medium` / `high`. Only sent to reasoning models (gpt-oss, qwen3) |
+| `ANTHROPIC_API_KEY` | – | Only needed with `LLM_PROVIDER=anthropic` |
 | `CLAUDE_MODEL` | `claude-opus-5` | Claude model |
-| `EFFORT` | `medium` | `low` / `medium` / `high` / `xhigh` / `max`. Lower is faster and cheaper; higher gives deeper reasoning |
-| `ENABLE_FALLBACK` | `true` | Server-side refusal fallback (Anthropic beta) |
+| `EFFORT` | `medium` | Claude effort: `low` / `medium` / `high` / `xhigh` / `max` |
+| `ENABLE_FALLBACK` | `true` | Claude server-side refusal fallback (Anthropic beta) |
 | `DATABASE_URL` | – | Postgres URL (e.g. Neon). Used instead of SQLite when set |
 | `DB_PATH` | `tutor.db` | SQLite file for memory |
 | `APP_PASSCODE` | – | If set, the API requires this passcode. Required on Vercel |
@@ -87,11 +92,12 @@ pytest
 TEST_DATABASE_URL=postgresql://user@localhost/test pytest
 ```
 
-The tests use a fake Claude client, so they need no API key or network.
+The tests use fake Claude and Groq API responses, so they need no API key or network.
 
 ```
 app/
   main.py      FastAPI routes: UI, /api/chat (SSE), /api/progress, /api/history, /api/reset
+  groq_agent.py  Groq streaming + tool-calling loop (default provider)
   agent.py     Claude streaming + tool loop, prompt caching, refusal handling
   tools.py     memory tool schemas, validation, execution
   memory.py    SQLite / Postgres storage (history, progress, notes, lesson, corrections, profile)
@@ -104,7 +110,7 @@ tests/         pytest suite
 
 ## Roadmap
 
-1. **Better voices**: optional server-side speech (Whisper-class STT, neural TTS with a natural Urdu voice) behind the same UI.
+1. **Better voices**: server-side speech recognition with Groq Whisper (better Urdu, works on iPhone Safari), plus neural TTS with a natural Urdu voice.
 2. **Knowledge base (RAG)**: upload your notes, vendor docs, and configs so the tutor can cite them.
 3. **Python sandbox**: run and check the exercises the tutor gives.
 4. **Network lab integration**: connect to a GNS3 / EVE-NG / Containerlab lab with Netmiko to run `show` commands during troubleshooting drills.

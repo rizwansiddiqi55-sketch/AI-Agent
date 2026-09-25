@@ -7,13 +7,17 @@ import os
 import threading
 from pathlib import Path
 
+from typing import Any
+
 import anthropic
+import groq
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .agent import TutorAgent, load_system_prompt
+from .groq_agent import GroqTutorAgent
 from .config import ON_VERCEL, get_settings
 from .memory import LEVELS, SUBJECTS, Memory
 from .modes import MODES
@@ -23,21 +27,28 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
-def create_agent() -> TutorAgent:
+def create_agent() -> Any:
     settings = get_settings()
-    if not (settings.anthropic_api_key or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-        logging.getLogger("tutor").warning(
-            "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key.")
+    log = logging.getLogger("tutor")
     memory = Memory(settings.memory_target)
-    # api_key=None lets the SDK fall back to its own credential resolution
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    return TutorAgent(client, settings, memory, load_system_prompt(settings.system_prompt_path))
+    system_prompt = load_system_prompt(settings.system_prompt_path)
+    if settings.llm_provider == "anthropic":
+        if not (settings.anthropic_api_key or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+            log.warning("ANTHROPIC_API_KEY is not set.")
+        # api_key=None lets the SDK fall back to its own credential resolution
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        return TutorAgent(client, settings, memory, system_prompt)
+    if not settings.groq_api_key:
+        log.warning("GROQ_API_KEY is not set. Copy .env.example to .env and add your key.")
+    # A placeholder key lets the app start; requests then fail with a clear auth error.
+    groq_client = groq.AsyncGroq(api_key=settings.groq_api_key or "missing-key")
+    return GroqTutorAgent(groq_client, settings, memory, system_prompt)
 
 
 _agent_lock = threading.Lock()
 
 
-def get_agent(request: Request) -> TutorAgent:
+def get_agent(request: Request) -> Any:
     """Create the agent on first use (works the same locally and on serverless platforms)."""
     state = request.app.state
     if not hasattr(state, "agent"):
@@ -60,7 +71,7 @@ async def require_passcode(request: Request, call_next):
             if not hmac.compare_digest(given.encode(), passcode.encode()):
                 return JSONResponse({"detail": "passcode required"}, status_code=401)
         elif ON_VERCEL:
-            # Never expose the API (and the Anthropic key's credit) publicly without a passcode.
+            # Never expose the API (and the LLM key's credit) publicly without a passcode.
             return JSONResponse({"detail": "Set APP_PASSCODE in the Vercel project settings."},
                                 status_code=503)
     return await call_next(request)
@@ -123,18 +134,10 @@ async def progress(request: Request):
 @app.get("/api/history")
 async def history(request: Request, session_id: str = "default"):
     """Visible transcript (text only) for restoring the UI after a reload."""
-    memory: Memory = get_agent(request).memory
-    items = []
-    for m in memory.get_history(session_id):
-        texts = [b["text"] for b in m["content"] if isinstance(b, dict) and b.get("type") == "text"]
-        if m["role"] == "user" and texts and texts[0].startswith("<session_context>"):
-            texts = texts[1:]
-        if texts:
-            items.append({"role": m["role"], "text": "\n".join(texts)})
-    return {"messages": items}
+    return {"messages": get_agent(request).visible_history(session_id)}
 
 
 @app.post("/api/reset")
 async def reset(req: ResetRequest, request: Request):
-    get_agent(request).memory.clear_history(req.session_id)
+    get_agent(request).reset(req.session_id)
     return {"ok": True}

@@ -86,6 +86,8 @@ def build_context_block(
 
 
 class TutorAgent:
+    provider = "anthropic"
+
     def __init__(self, client: Any, settings: Settings, memory: Memory, system_prompt: str):
         self.client = client
         self.settings = settings
@@ -95,6 +97,23 @@ class TutorAgent:
             {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral", "ttl": "1h"}}
         ]
         self.tools = api_tools()
+
+    def history_key(self, session_id: str) -> str:
+        return session_id
+
+    def visible_history(self, session_id: str) -> list[dict]:
+        """Visible transcript (text only) for restoring the UI after a reload."""
+        items = []
+        for m in self.memory.get_history(self.history_key(session_id)):
+            texts = [b["text"] for b in m["content"] if isinstance(b, dict) and b.get("type") == "text"]
+            if m["role"] == "user" and texts and texts[0].startswith("<session_context>"):
+                texts = texts[1:]
+            if texts:
+                items.append({"role": m["role"], "text": "\n".join(texts)})
+        return items
+
+    def reset(self, session_id: str) -> None:
+        self.memory.clear_history(self.history_key(session_id))
 
     def _request_params(self, messages: list[dict]) -> dict:
         params: dict[str, Any] = {
@@ -121,11 +140,11 @@ class TutorAgent:
         urdu_voice: bool = False,
     ) -> AsyncIterator[dict]:
         """Run one user turn. Yields UI events: text, status, info, error, done."""
-        history = self.memory.get_history(session_id)
+        history = self.memory.get_history(self.history_key(session_id))
         if len(history) >= self.settings.max_history_messages:
             # Simple compaction: start a fresh history. Long-term memory (lesson, progress,
             # notes) survives in the database, and the prefix is never edited in place.
-            self.memory.clear_history(session_id)
+            self.reset(session_id)
             history = []
             yield {"type": "info", "text": "Started a fresh conversation. Your progress and notes are kept."}
 
@@ -204,6 +223,6 @@ class TutorAgent:
 
         # Only persist a turn that ends with an assistant message (never a dangling tool_result)
         if new_messages[-1]["role"] == "assistant":
-            self.memory.append_messages(session_id, new_messages)
+            self.memory.append_messages(self.history_key(session_id), new_messages)
         log.info("usage %s", usage_total)
         yield {"type": "done", "usage": usage_total}

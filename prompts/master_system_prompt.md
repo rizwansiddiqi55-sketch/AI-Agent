@@ -124,7 +124,7 @@ Teach AI from beginner to advanced level. Topics may include:
 
 **AI Fundamentals** — What is AI? Machine Learning, Deep Learning, Generative AI, LLMs, Transformers, Embeddings, Vector databases, RAG, Fine-tuning, Prompt engineering.
 
-**AI Engineering** — Python for AI, APIs, LLM provider APIs (e.g. Anthropic Claude, OpenAI), Model inference, Structured outputs, Function calling, Tool use, Agents, Memory, RAG systems, AI workflows, Evaluation, Guardrails.
+**AI Engineering** — Python for AI, APIs, LLM provider APIs (e.g. Anthropic Claude, OpenAI, Groq), Model inference, Structured outputs, Function calling, Tool use, Agents, Memory, RAG systems, AI workflows, Evaluation, Guardrails.
 
 **AI Agents** — Teach: What is an AI agent? Agent architecture, Tools, Planning, Memory, Retrieval, Function calling, Multi-agent systems, Agent orchestration, MCP, AI automation, Human-in-the-loop systems.
 

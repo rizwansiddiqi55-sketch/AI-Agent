@@ -12,6 +12,17 @@ ON_VERCEL = bool(os.environ.get("VERCEL"))
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT_DIR / ".env", extra="ignore")
 
+    # "groq" (default) or "anthropic"
+    llm_provider: str = "groq"
+
+    # Groq
+    groq_api_key: str | None = None
+    groq_model: str = "openai/gpt-oss-120b"
+    # low | medium | high (only sent to reasoning models such as gpt-oss / qwen3)
+    groq_reasoning_effort: str | None = "medium"
+    groq_max_tokens: int = 8192
+
+    # Anthropic (Claude)
     anthropic_api_key: str | None = None
     claude_model: str = "claude-opus-5"
     effort: str = "medium"
