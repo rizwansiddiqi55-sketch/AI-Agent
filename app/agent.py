@@ -20,6 +20,13 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 _PRE_FALLBACK_DROP = {"thinking", "redacted_thinking", "tool_use", "server_tool_use"}
 
 
+def _api_error_message(exc: anthropic.APIStatusError) -> str:
+    """The API's own explanation (e.g. low credit balance), falling back to a generic hint."""
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error") if isinstance(body.get("error"), dict) else {}
+    return error.get("message") or "Please try again."
+
+
 def load_system_prompt(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
@@ -183,7 +190,7 @@ class TutorAgent:
             return
         except anthropic.APIStatusError as exc:
             log.exception("API error")
-            yield {"type": "error", "text": f"API error ({exc.status_code}). Please try again."}
+            yield {"type": "error", "text": f"Anthropic API error ({exc.status_code}): {_api_error_message(exc)}"}
             return
         except anthropic.APIConnectionError:
             yield {"type": "error", "text": "Could not reach the Anthropic API. Check your internet connection."}

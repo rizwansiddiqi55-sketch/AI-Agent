@@ -105,3 +105,22 @@ def test_prepare_content_handles_fallback_boundary():
 def test_prepare_content_drops_tool_use_on_max_tokens():
     blocks = [{"type": "text", "text": "x"}, {"type": "tool_use", "id": "1", "name": "n", "input": {}}]
     assert prepare_assistant_content(blocks, "max_tokens") == [{"type": "text", "text": "x"}]
+
+
+def test_api_error_message_is_shown(memory):
+    import anthropic
+    import httpx2
+
+    body = {"type": "error", "error": {"type": "invalid_request_error",
+                                       "message": "Your credit balance is too low to access the Anthropic API."}}
+
+    def handler(request):
+        return httpx2.Response(400, json=body)
+
+    client = anthropic.AsyncAnthropic(api_key="sk-test", max_retries=0,
+                                      http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
+    agent = TutorAgent(client, Settings(anthropic_api_key="sk-test"), memory, "SYS")
+    events = run(agent, "default", "hi")
+    assert events[-1] == {"type": "error", "text": "Anthropic API error (400): Your credit balance is too low "
+                                                   "to access the Anthropic API."}
+    assert memory.get_history("default") == []
