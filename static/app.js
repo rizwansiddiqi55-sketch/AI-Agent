@@ -92,14 +92,33 @@ function setStatus(text) {
 }
 
 // ---------- Text-to-speech ----------
+// Preferred: natural Azure neural voices from the server (/api/tts), including a native
+// Pakistani Urdu voice. Fallback: the device's own speechSynthesis voices.
+function silentWavUrl() {
+  // 0.1 s of silence, used to unlock audio playback on iOS from a tap
+  const samples = 800, buf = new ArrayBuffer(44 + samples * 2), v = new DataView(buf);
+  const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, "RIFF"); v.setUint32(4, 36 + samples * 2, true); str(8, "WAVEfmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 8000, true); v.setUint32(28, 16000, true); v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, samples * 2, true);
+  let bin = ""; new Uint8Array(buf).forEach((b) => { bin += String.fromCharCode(b); });
+  return "data:audio/wav;base64," + btoa(bin);
+}
+
 const tts = {
   voices: [],
-  queue: 0,
+  queue: 0,          // sentences waiting or playing (queue > 0 means "speaking")
+  server: false,     // Azure voice available (set from /api/config)
+  items: [],
+  playing: false,
+  gen: 0,            // bumped on cancel so stale playback is ignored
+  audio: new Audio(),
   load() {
     this.voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
   },
   hasUrdu() {
-    return this.voices.some((v) => v.lang.toLowerCase().startsWith("ur"));
+    return this.server || this.voices.some((v) => v.lang.toLowerCase().startsWith("ur"));
   },
   pickVoice(text) {
     const want = URDU_RE.test(text) ? ["ur"] : ["en-gb", "en-us", "en-in", "en"];
@@ -110,23 +129,90 @@ const tts = {
     return null;
   },
   speak(text) {
-    if (!window.speechSynthesis) return;
     const clean = cleanForSpeech(text);
     if (!clean) return;
+    if (this.server) this.serverSpeak(clean);
+    else this.deviceSpeak(clean);
+  },
+  deviceSpeak(clean) {
+    if (!window.speechSynthesis) return;
     const u = new SpeechSynthesisUtterance(clean);
     const voice = this.pickVoice(clean);
     if (voice) { u.voice = voice; u.lang = voice.lang; }
     u.rate = 1.0;
+    this.started();
+    u.onend = u.onerror = () => this.finished();
+    speechSynthesis.speak(u);
+  },
+  serverSpeak(clean) {
+    // Start fetching right away so the next sentence is ready when the current one ends.
+    const promise = api("/api/tts", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: clean }),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${res.status}`);
+      }
+      return res.blob();
+    });
+    promise.catch(() => {});  // handled in playNext
+    this.items.push({ text: clean, promise });
+    this.started();
+    if (!this.playing) this.playNext(this.gen);
+  },
+  async playNext(gen) {
+    const item = this.items.shift();
+    if (!item) { this.playing = false; return; }
+    this.playing = true;
+    let url = null;
+    try {
+      const blob = await item.promise;
+      if (gen !== this.gen) return;
+      url = URL.createObjectURL(blob);
+      this.audio.src = url;
+      await new Promise((resolve, reject) => {
+        this.audio.onended = resolve;
+        this.audio.onerror = () => reject(new Error("audio playback failed"));
+        this.audio.play().catch(reject);
+      });
+    } catch (err) {
+      if (gen !== this.gen) return;
+      // Fall back to the device voice for this and the remaining sentences.
+      this.server = false;
+      setStatus(`Natural voice unavailable (${err.message}). Using the device voice.`);
+      const rest = [item, ...this.items];
+      this.items = [];
+      this.playing = false;
+      this.queue = Math.max(0, this.queue - rest.length);
+      rest.forEach((i) => this.deviceSpeak(i.text));
+      if (this.queue === 0) this.onIdle();
+      return;
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+    }
+    if (gen !== this.gen) return;
+    this.finished();
+    this.playNext(gen);
+  },
+  started() {
     this.queue++;
     stopBtn.hidden = false;
     call.update();
-    u.onend = u.onerror = () => {
-      this.queue = Math.max(0, this.queue - 1);
-      if (this.queue === 0) this.onIdle();
-    };
-    speechSynthesis.speak(u);
+  },
+  finished() {
+    this.queue = Math.max(0, this.queue - 1);
+    if (this.queue === 0) this.onIdle();
+  },
+  unlock() {
+    // Must run inside a tap on iOS; later plays on the same element are then allowed.
+    this.audio.src = silentWavUrl();
+    this.audio.play().catch(() => {});
   },
   cancel() {
+    this.gen++;
+    this.items = [];
+    this.playing = false;
+    try { this.audio.pause(); } catch { /* ignore */ }
     if (window.speechSynthesis) speechSynthesis.cancel();
     this.queue = 0;
     stopBtn.hidden = true;
@@ -210,9 +296,12 @@ function setListeningUI(on, label = "Listening…") {
 // iOS only allows speech output after it has been started from a tap once.
 let audioUnlocked = false;
 function unlockAudio() {
-  if (audioUnlocked || !window.speechSynthesis) return;
+  if (audioUnlocked) return;
   audioUnlocked = true;
-  try { speechSynthesis.speak(new SpeechSynthesisUtterance("")); } catch { /* ignore */ }
+  tts.unlock();
+  if (window.speechSynthesis) {
+    try { speechSynthesis.speak(new SpeechSynthesisUtterance("")); } catch { /* ignore */ }
+  }
 }
 
 // --- Server (Whisper) recorder with automatic end-of-speech detection ---
@@ -616,5 +705,12 @@ async function loadHistory() {
   for (const m of data.messages) addMessage(m.role, m.text);
 }
 
-// Modes first so a passcode prompt appears once, then the transcript.
-loadModes().then(loadHistory);
+async function loadConfig() {
+  const res = await api("/api/config");
+  if (!res.ok) return;
+  const data = await res.json();
+  tts.server = !!data.tts;
+}
+
+// Modes first so a passcode prompt appears once, then server features and the transcript.
+loadModes().then(loadConfig).then(loadHistory);

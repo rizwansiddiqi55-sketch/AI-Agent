@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     # Whisper model for server-side speech recognition (needs GROQ_API_KEY, any LLM provider)
     groq_stt_model: str = "whisper-large-v3"
 
+    # Azure Speech text-to-speech (natural Urdu voice). Both key and region are needed.
+    azure_speech_key: str | None = None
+    azure_speech_region: str | None = None
+    azure_urdu_voice: str = "ur-PK-AsadNeural"      # or ur-PK-UzmaNeural (female)
+    azure_english_voice: str = "en-US-AndrewNeural"  # e.g. en-US-AvaNeural, en-GB-RyanNeural
+    azure_speech_rate: str = "0%"                    # e.g. "-10%" to speak a little slower
+
     # Anthropic (Claude)
     anthropic_api_key: str | None = None
     claude_model: str = "claude-opus-5"

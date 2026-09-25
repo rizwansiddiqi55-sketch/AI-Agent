@@ -131,3 +131,31 @@ def test_transcribe_without_groq_key(memory, monkeypatch):
         assert client.post("/api/transcribe", content=b"x" * 5000).status_code == 501
     finally:
         get_settings.cache_clear()
+
+
+def test_tts_and_config_endpoints(memory, monkeypatch):
+    import app.main as main
+    from app.config import get_settings
+
+    class FakeTTS:
+        async def synthesize(self, text):
+            return b"mp3:" + text.encode()
+
+    monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False)
+    get_settings.cache_clear()
+    monkeypatch.setattr(main, "_tts", None)
+    try:
+        client = make_client(memory, [])
+        assert client.get("/api/config").json()["tts"] is False
+        assert client.post("/api/tts", json={"text": "hi"}).status_code == 501
+
+        monkeypatch.setenv("AZURE_SPEECH_KEY", "k")
+        monkeypatch.setenv("AZURE_SPEECH_REGION", "eastus")
+        get_settings.cache_clear()
+        monkeypatch.setattr(main, "_tts", FakeTTS())
+        assert client.get("/api/config").json()["tts"] is True
+        res = client.post("/api/tts", json={"text": "سلام"})
+        assert res.status_code == 200 and res.headers["content-type"] == "audio/mpeg"
+        assert res.content == "mp3:سلام".encode()
+    finally:
+        get_settings.cache_clear()

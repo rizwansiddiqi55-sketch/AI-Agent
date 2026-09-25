@@ -17,7 +17,7 @@ Browser mic ── recorded audio ──► /api/transcribe (Groq Whisper, en / 
 ```
 
 - **Speech-to-text uses Groq Whisper** (`whisper-large-v3`). The page records your voice, stops automatically when you pause, and the server transcribes it. This works in every modern browser, including **iPhone Safari**, and handles Urdu much better than browser dictation. If `GROQ_API_KEY` isn't set, the page falls back to the browser's built-in speech recognition (Chrome/Edge).
-- **Text-to-speech runs in the browser** (speechSynthesis), free and with no extra key. Code blocks and CLI commands appear on screen but are not read aloud.
+- **Text-to-speech uses Azure Speech neural voices** when `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION` are set. Urdu sentences are spoken by a native Pakistani Urdu voice (`ur-PK-AsadNeural` by default), and English sentences by an English neural voice. The tutor then writes Urdu in Urdu script so it is pronounced correctly. Without Azure, the device's built-in voices are used; phones often have no Urdu voice, so the tutor falls back to Roman Urdu. Code blocks and CLI commands appear on screen but are not read aloud.
 - **Groq** powers the tutor by default, through the official `groq` Python SDK. The default model is `openai/gpt-oss-120b`, which is fast, good at tool calling, and multilingual. Replies stream and the model's reasoning is hidden. You can change the model with `GROQ_MODEL`.
 - **Groq free plan:** requests are kept small so they fit Groq's free-tier limits (for `gpt-oss-120b`, 8,000 tokens per minute). Groq uses a condensed prompt ([`prompts/compact_system_prompt.md`](prompts/compact_system_prompt.md)) and only the recent part of the conversation; lesson, progress and notes stay available through the memory tools. If Groq asks the app to wait a few seconds, it shows "waiting" and retries on its own. For heavier daily use, Groq's pay-as-you-go Dev tier removes these limits.
 - **Claude** is also supported. Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` to use it instead. It uses the official `anthropic` SDK with adaptive thinking and prompt caching. Each provider keeps its own conversation history. Progress, notes, and lesson position are shared.
@@ -48,7 +48,8 @@ The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `
 3. **Database (keeps your progress and notes permanently)**. Any Postgres works. Without one the app uses a temporary SQLite file in `/tmp` that resets often.
    - **Supabase (free plan):** create a project, then click **Connect** at the top of the dashboard and copy the **Transaction pooler** connection string (port `6543`). Replace `[YOUR-PASSWORD]` with your database password; if the password has symbols like `@`, `#`, or `/`, URL-encode them (for example `@` → `%40`). Add it in Vercel as `DATABASE_URL`. Don't use the "Direct connection" string, because it is IPv6-only and Vercel can't reach it. The app creates its tables on first use and turns on row-level security for them.
    - **Neon:** Storage → Create Database → Neon, and connect it to this project (sets `DATABASE_URL`).
-4. Redeploy. Open the site, and enter the passcode once per browser when asked.
+4. **Optional, recommended for Urdu: Azure Speech voice.** In the Azure portal create a **Speech service** resource (Free F0 tier: 500,000 characters/month), then from **Keys and Endpoint** copy **Key 1** and the **Location/Region** (for example `eastus`). Add them in Vercel as `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION`.
+5. Redeploy. Open the site, and enter the passcode once per browser when asked.
 
 ### Configuration (`.env`)
 
@@ -61,6 +62,11 @@ The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `
 | `GROQ_HISTORY_CHARS` | `6000` | How much recent conversation is sent per request (~4 characters per token) |
 | `GROQ_MAX_TOKENS` | `2048` | Max reply length, including hidden reasoning |
 | `GROQ_STT_MODEL` | `whisper-large-v3` | Speech recognition model (`whisper-large-v3-turbo` is faster) |
+| `AZURE_SPEECH_KEY` | – | Azure Speech key: enables natural Urdu and English voices |
+| `AZURE_SPEECH_REGION` | – | Azure Speech region, e.g. `eastus` |
+| `AZURE_URDU_VOICE` | `ur-PK-AsadNeural` | Urdu voice (`ur-PK-UzmaNeural` for a female voice) |
+| `AZURE_ENGLISH_VOICE` | `en-US-AndrewNeural` | English voice (e.g. `en-US-AvaNeural`, `en-GB-RyanNeural`) |
+| `AZURE_SPEECH_RATE` | `0%` | Speaking speed, e.g. `-10%` for slower |
 | `ANTHROPIC_API_KEY` | – | Only needed with `LLM_PROVIDER=anthropic` |
 | `CLAUDE_MODEL` | `claude-opus-5` | Claude model |
 | `EFFORT` | `medium` | Claude effort: `low` / `medium` / `high` / `xhigh` / `max` |
@@ -88,7 +94,7 @@ Example things to say:
 - "Give me a lab on BGP route filtering with prefix lists."
 - "Explain how a RAG system works, simply."
 
-**Urdu voice output** depends on your device having an Urdu text-to-speech voice. If it doesn't, the tutor automatically writes Urdu in Roman Urdu so the English voice can read it.
+**Urdu voice output:** with Azure Speech configured, Urdu is spoken by a native Pakistani Urdu neural voice. Without it, the app depends on the device having an Urdu voice; if it doesn't, the tutor writes Urdu in Roman Urdu so the English voice can read it.
 
 ## Development
 
@@ -107,6 +113,7 @@ app/
   groq_agent.py  Groq streaming + tool-calling loop (default provider)
   agent.py     Claude streaming + tool loop, prompt caching, refusal handling
   stt.py       speech-to-text with Groq Whisper
+  tts.py       text-to-speech with Azure neural voices (Urdu + English)
   tools.py     memory tool schemas, validation, execution
   memory.py    SQLite / Postgres storage (history, progress, notes, lesson, corrections, profile)
   modes.py     quick learning-mode commands
@@ -118,7 +125,7 @@ tests/         pytest suite
 
 ## Roadmap
 
-1. **Better voices**: neural TTS with a natural Urdu voice.
+1. **Voice choice in the UI**: pick male/female Urdu voice and speaking speed from the page.
 2. **Knowledge base (RAG)**: upload your notes, vendor docs, and configs so the tutor can cite them.
 3. **Python sandbox**: run and check the exercises the tutor gives.
 4. **Network lab integration**: connect to a GNS3 / EVE-NG / Containerlab lab with Netmiko to run `show` commands during troubleshooting drills.

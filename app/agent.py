@@ -75,8 +75,13 @@ def build_context_block(
         f"Saved lesson position: {lesson_text}",
         "Channel: voice. Rizwan's words come from speech recognition (may contain transcription "
         "errors); your reply will be read aloud by text-to-speech.",
-        f"Urdu-script voice available on this device: {'yes' if urdu_voice else 'no'}"
-        + ("" if urdu_voice else " (write any Urdu in Roman Urdu so it can be spoken)"),
+        (
+            "A natural Urdu voice is available: write any Urdu in Urdu script (not Roman Urdu), "
+            "even if Rizwan types Roman Urdu, so it is pronounced correctly. Keep technical terms "
+            "and commands in English letters."
+            if urdu_voice
+            else "No Urdu voice on this device: write any Urdu in Roman Urdu so it can be spoken."
+        ),
     ]
     instruction = mode_instruction(mode)
     if instruction:

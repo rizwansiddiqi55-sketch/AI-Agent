@@ -12,7 +12,7 @@ from typing import Any
 import anthropic
 import groq
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -22,6 +22,7 @@ from .config import ON_VERCEL, get_settings
 from .memory import LEVELS, SUBJECTS, Memory
 from .modes import MODES
 from .stt import TranscriptionError, transcribe
+from .tts import AzureTTS, SpeechError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -87,6 +88,10 @@ class ChatRequest(BaseModel):
     urdu_voice: bool = False
 
 
+class SpeakRequest(BaseModel):
+    text: str = Field(max_length=4000)
+
+
 class ResetRequest(BaseModel):
     session_id: str = Field(default="default", max_length=64)
 
@@ -140,6 +145,42 @@ async def transcribe_audio(request: Request, lang: str | None = None):
     except TranscriptionError as exc:
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
     return {"text": text}
+
+
+_tts: AzureTTS | None = None
+
+
+def get_tts() -> AzureTTS | None:
+    global _tts
+    settings = get_settings()
+    if not (settings.azure_speech_key and settings.azure_speech_region):
+        return None
+    if _tts is None:
+        _tts = AzureTTS(settings.azure_speech_key, settings.azure_speech_region,
+                        settings.azure_urdu_voice, settings.azure_english_voice,
+                        settings.azure_speech_rate)
+    return _tts
+
+
+@app.get("/api/config")
+async def config():
+    """Which server-side speech features are available, so the page can pick the best path."""
+    return {"tts": get_tts() is not None, "stt": bool(get_settings().groq_api_key)}
+
+
+@app.post("/api/tts")
+async def speak(req: SpeakRequest):
+    """Text-to-speech with Azure (Urdu or English voice chosen from the text). Returns MP3."""
+    tts = get_tts()
+    if tts is None:
+        return JSONResponse({"detail": "Server voice needs AZURE_SPEECH_KEY and AZURE_SPEECH_REGION."},
+                            status_code=501)
+    try:
+        audio = await tts.synthesize(req.text)
+    except SpeechError as exc:
+        logging.getLogger("tutor.tts").warning("TTS failed: %s", exc)
+        return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+    return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/progress")
