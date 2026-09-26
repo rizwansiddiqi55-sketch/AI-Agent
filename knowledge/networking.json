@@ -1,0 +1,211 @@
+[
+  {
+    "id": "subnetting",
+    "subject": "Networking",
+    "title": "IPv4 & IPv6 Addressing and Subnetting",
+    "level": "Beginner",
+    "tags": ["ip", "ipv4", "ipv6", "subnet", "cidr", "mask", "rfc1918", "vlsm"],
+    "key_points": [
+      "Hosts per subnet = 2^(host bits) - 2 (network and broadcast addresses are not usable).",
+      "Block size = 256 - the interesting mask octet; subnets start at multiples of the block size.",
+      "RFC 1918 private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.",
+      "VLSM: allocate the largest subnets first to avoid overlaps and wasted space.",
+      "IPv6 LAN subnets are /64; link-local addresses are fe80::/10; global unicast is 2000::/3.",
+      "/31 is valid on point-to-point links (RFC 3021); /32 is a host route or loopback."
+    ],
+    "commands": ["show ip interface brief", "show ipv6 interface brief", "show ip route connected"],
+    "qa": [
+      {"q": "How many usable hosts are in a /27 subnet?", "a": "A /27 leaves 5 host bits: 2^5 = 32 addresses, minus network and broadcast = 30 usable hosts. The mask is 255.255.255.224 and the block size is 32.", "level": "Beginner"},
+      {"q": "What are the network and broadcast addresses for 192.168.10.77/26?", "a": "A /26 has a block size of 64, so subnets start at .0, .64, .128, .192. 77 falls in the .64 block: network 192.168.10.64, broadcast 192.168.10.127, usable hosts .65 to .126.", "level": "Beginner"},
+      {"q": "You need subnets for 100, 50 and 20 hosts from 10.1.1.0/24. How would you plan it?", "a": "Use VLSM and allocate largest first: 100 hosts needs a /25 (126 hosts) = 10.1.1.0/25; 50 hosts needs a /26 (62) = 10.1.1.128/26; 20 hosts needs a /27 (30) = 10.1.1.192/27. That leaves 10.1.1.224/27 spare.", "level": "Intermediate"},
+      {"q": "Why do we use /31 on point-to-point links?", "a": "RFC 3021 allows /31 on point-to-point links because there is no need for network or broadcast addresses between two routers. It saves addresses compared with /30, which wastes two of its four addresses.", "level": "Intermediate"},
+      {"q": "What is the difference between an IPv6 link-local and a global unicast address?", "a": "Link-local (fe80::/10) is automatically configured on every IPv6 interface, is only valid on that link and is used for neighbor discovery and routing protocol next hops. Global unicast (2000::/3) is routable on the internet.", "level": "Intermediate"},
+      {"q": "What does a subnet mask actually do?", "a": "It marks which bits of the address are the network portion and which are the host portion. A device ANDs its IP with the mask to find its network, and uses that to decide whether a destination is local (ARP directly) or remote (send to the default gateway).", "level": "Beginner"}
+    ]
+  },
+  {
+    "id": "vlan-stp",
+    "subject": "Networking",
+    "title": "VLANs, Trunking and Spanning Tree",
+    "level": "Intermediate",
+    "tags": ["vlan", "trunk", "802.1q", "stp", "rstp", "mst", "native vlan", "bpdu", "portfast", "root bridge", "switching", "etherchannel", "lacp"],
+    "key_points": [
+      "802.1Q inserts a 4-byte tag carrying a 12-bit VLAN ID; the native VLAN is sent untagged on a trunk.",
+      "Native VLAN mismatches cause traffic to leak between VLANs; CDP reports the mismatch.",
+      "STP elects the root bridge with the lowest bridge ID (priority, default 32768, plus MAC address).",
+      "802.1D port states: blocking, listening, learning, forwarding; convergence can take 30 to 50 seconds.",
+      "RSTP (802.1w) converges in about a second using proposal/agreement and alternate/backup ports.",
+      "Protect the edge with PortFast + BPDU Guard, and the core with Root Guard; Loop Guard protects against unidirectional links.",
+      "EtherChannel bundles links with LACP (802.3ad, active/passive) or PAgP; member ports must match speed, duplex, VLANs and trunk settings."
+    ],
+    "commands": ["show vlan brief", "show interfaces trunk", "show spanning-tree", "show spanning-tree root", "show etherchannel summary", "show cdp neighbors detail"],
+    "qa": [
+      {"q": "How is the STP root bridge elected, and how would you control it?", "a": "Switches compare bridge IDs in BPDUs; the lowest bridge ID (priority first, then MAC) wins. Don't leave it to chance: set the intended core switch with 'spanning-tree vlan X root primary' or a low priority such as 4096, and the backup core with 'root secondary'.", "level": "Intermediate"},
+      {"q": "What happens if the native VLAN doesn't match on both ends of a trunk?", "a": "Untagged frames from one side's native VLAN arrive in a different VLAN on the other side, so traffic leaks between VLANs and STP can behave unexpectedly. CDP logs a native VLAN mismatch. Fix by matching the native VLAN, and ideally use an unused native VLAN for security.", "level": "Intermediate"},
+      {"q": "What is the difference between PortFast, BPDU Guard and Root Guard?", "a": "PortFast moves an access port straight to forwarding for end hosts. BPDU Guard err-disables a PortFast port if a BPDU arrives, stopping someone plugging in a switch. Root Guard stops a port from becoming a root port, so a downstream switch with a better priority cannot take over as root.", "level": "Intermediate"},
+      {"q": "Why does RSTP converge faster than classic STP?", "a": "RSTP doesn't rely on timers. It uses a proposal/agreement handshake on point-to-point links, pre-computes alternate and backup ports, and edge ports go straight to forwarding. Convergence drops from 30-50 seconds to around a second.", "level": "Advanced"},
+      {"q": "An EtherChannel won't come up. What would you check?", "a": "Check both sides use compatible modes (LACP active/active or active/passive, not passive/passive; PAgP desirable/auto), and that member ports match speed, duplex, access/trunk mode, allowed VLANs and native VLAN. 'show etherchannel summary' shows flags such as (s) suspended or (I) stand-alone.", "level": "Intermediate"},
+      {"q": "What is the difference between an access port and a trunk port?", "a": "An access port carries one VLAN, untagged, usually to an end device. A trunk carries multiple VLANs between switches (or to servers/APs) using 802.1Q tags, with one native VLAN untagged.", "level": "Beginner"}
+    ]
+  },
+  {
+    "id": "routing-fundamentals",
+    "subject": "Networking",
+    "title": "Routing Fundamentals, Redistribution and Policy",
+    "level": "Intermediate",
+    "tags": ["routing", "administrative distance", "longest prefix", "static", "redistribution", "route-map", "prefix-list", "pbr", "floating static"],
+    "key_points": [
+      "Route selection order: longest prefix match first, then lowest administrative distance, then lowest metric.",
+      "Default AD: connected 0, static 1, eBGP 20, EIGRP internal 90, OSPF 110, IS-IS 115, RIP 120, EIGRP external 170, iBGP 200.",
+      "A floating static route has a higher AD than the primary route, so it is only used as a backup.",
+      "Redistribution between protocols needs a seed metric and loop prevention (tagging + route-maps) at mutual redistribution points.",
+      "Prefix-lists match on prefix and length (ge/le); route-maps combine matches with set actions and are processed top-down.",
+      "Policy-based routing (PBR) forwards based on criteria other than the destination, such as source address."
+    ],
+    "commands": ["show ip route", "show ip route 10.1.1.0 255.255.255.0 longer-prefixes", "show ip protocols", "show route-map", "show ip prefix-list", "debug ip policy"],
+    "qa": [
+      {"q": "A router has a /24 from OSPF and a /16 from EIGRP covering the same destination. Which is used for 10.1.1.5?", "a": "The OSPF /24, because longest prefix match wins before administrative distance is considered. AD only compares routes to exactly the same prefix and length.", "level": "Intermediate"},
+      {"q": "What is a floating static route and when would you use one?", "a": "A static route configured with a higher administrative distance than the dynamic route, for example 'ip route 0.0.0.0 0.0.0.0 192.0.2.1 250'. It stays out of the routing table until the primary route disappears, which makes it a simple backup path, for example over a secondary ISP or LTE link.", "level": "Beginner"},
+      {"q": "What problems can mutual redistribution cause, and how do you prevent them?", "a": "Routes can be redistributed back into the protocol they came from, causing suboptimal routing or routing loops, especially with two redistribution points. Prevent it by tagging routes when redistributing and denying tagged routes on the way back using route-maps, and by filtering with prefix-lists.", "level": "Advanced"},
+      {"q": "What is the difference between a prefix-list and an ACL for route filtering?", "a": "A prefix-list matches the prefix and its length, for example 10.0.0.0/8 le 24, which is what route filtering needs. An ACL matches addresses with wildcard masks and can't express prefix length ranges cleanly. Prefix-lists are clearer and more efficient for routing policy.", "level": "Intermediate"},
+      {"q": "When would you use policy-based routing?", "a": "When traffic must take a path chosen by something other than the destination, for example sending a guest subnet out of a cheaper ISP, or steering voice traffic to a specific link. PBR uses a route-map applied inbound on the interface with 'ip policy route-map'.", "level": "Intermediate"}
+    ]
+  },
+  {
+    "id": "ospf",
+    "subject": "Networking",
+    "title": "OSPF",
+    "level": "Intermediate",
+    "tags": ["ospf", "link-state", "lsa", "area", "dr", "bdr", "spf", "adjacency", "stub", "nssa"],
+    "key_points": [
+      "Link-state IGP using Dijkstra's SPF algorithm; administrative distance 110; IP protocol 89.",
+      "Cost = reference bandwidth / interface bandwidth; default reference is 100 Mbps, so set 'auto-cost reference-bandwidth' consistently in modern networks.",
+      "Area 0 is the backbone; all other areas must connect to it (or use a virtual link).",
+      "Neighbor states: Down, Init, 2-Way, ExStart, Exchange, Loading, Full.",
+      "Adjacency requires matching area, hello/dead timers, subnet and mask, authentication, stub flags and (for Full) MTU; router IDs must be unique.",
+      "DR/BDR are elected on broadcast networks (highest priority, then highest router ID) to reduce flooding; multicast 224.0.0.5 (all OSPF) and 224.0.0.6 (DRs).",
+      "Common LSAs: 1 router, 2 network, 3 summary, 4 ASBR summary, 5 external, 7 NSSA external.",
+      "Stub areas block type 5, totally stubby also block type 3, NSSA allows redistribution using type 7."
+    ],
+    "commands": ["show ip ospf neighbor", "show ip ospf interface brief", "show ip ospf database", "show ip route ospf", "debug ip ospf adj"],
+    "qa": [
+      {"q": "Two OSPF routers are stuck in ExStart/Exchange. What is the most likely cause?", "a": "An MTU mismatch. The routers can't agree on DBD exchange because one side's packets are too big for the other. Check 'show interface' MTU on both ends and fix the MTU, or as a last resort use 'ip ospf mtu-ignore'.", "level": "Intermediate"},
+      {"q": "Neighbors are stuck in 2-Way on an Ethernet segment. Is that a problem?", "a": "Not necessarily. On a broadcast network, DROTHER routers only form Full adjacencies with the DR and BDR; between two DROTHERs, 2-Way is normal. It is only a problem if one of them should be DR/BDR, for example because of OSPF priority 0 on both.", "level": "Intermediate"},
+      {"q": "What must match for two routers to become OSPF neighbors?", "a": "Area ID, hello and dead intervals, subnet and mask on the link, authentication type and key, and stub/NSSA area flags. Router IDs must be unique. MTU must also match for the adjacency to reach Full.", "level": "Beginner"},
+      {"q": "Why should you change the OSPF reference bandwidth?", "a": "With the default 100 Mbps reference, every link of 100 Mbps and above gets cost 1, so OSPF can't tell a 1 G link from a 100 G link. Set 'auto-cost reference-bandwidth' to, for example, 100000 (100 G) on every router in the domain so the costs stay consistent.", "level": "Intermediate"},
+      {"q": "What is the difference between a stub, totally stubby and NSSA area?", "a": "A stub area blocks external type 5 LSAs and gets a default route instead. Totally stubby (Cisco) also blocks inter-area type 3 LSAs, leaving only a default. NSSA blocks type 5 but allows an ASBR inside the area to redistribute routes as type 7, which the ABR translates to type 5.", "level": "Advanced"},
+      {"q": "How is the OSPF DR elected, and is it pre-emptive?", "a": "The router with the highest interface OSPF priority wins (default 1, priority 0 never becomes DR); ties go to the highest router ID. It is not pre-emptive: a new router with a higher priority won't take over until the DR fails or OSPF is reset.", "level": "Intermediate"},
+      {"q": "An OSPF route is missing from the routing table but the neighbor is Full. How do you troubleshoot?", "a": "Check whether the LSA is in the database ('show ip ospf database'), whether it is filtered (distribute-list, area filter-list), whether a better AD route exists, whether the network is actually advertised (network statement or 'ip ospf area' on the interface, passive-interface), and for external routes whether the forwarding address is reachable.", "level": "Advanced"}
+    ]
+  },
+  {
+    "id": "bgp",
+    "subject": "Networking",
+    "title": "BGP",
+    "level": "Advanced",
+    "tags": ["bgp", "ebgp", "ibgp", "as path", "local preference", "med", "route reflector", "next-hop-self", "community", "path vector"],
+    "key_points": [
+      "Path-vector protocol over TCP port 179; AD 20 for eBGP and 200 for iBGP.",
+      "Neighbor states: Idle, Connect, Active, OpenSent, OpenConfirm, Established.",
+      "Cisco best-path order (simplified): highest weight, highest local preference, locally originated, shortest AS path, lowest origin (IGP < EGP < incomplete), lowest MED, eBGP over iBGP, lowest IGP metric to next hop, oldest eBGP path, lowest router ID.",
+      "iBGP doesn't re-advertise iBGP-learned routes to other iBGP peers, so use a full mesh, route reflectors or confederations.",
+      "eBGP changes the next hop but iBGP doesn't; use 'next-hop-self' toward iBGP peers or make the external next hop reachable.",
+      "Influence outbound traffic with weight/local preference; influence inbound traffic with AS-path prepending, MED or communities agreed with the ISP."
+    ],
+    "commands": ["show ip bgp summary", "show ip bgp", "show ip bgp neighbors x.x.x.x advertised-routes", "show ip bgp neighbors x.x.x.x received-routes", "clear ip bgp x.x.x.x soft"],
+    "qa": [
+      {"q": "A BGP neighbor is stuck in Active. What does that mean and what do you check?", "a": "Active means the router is trying to open the TCP session but it isn't succeeding. Check IP reachability to the neighbor address, that TCP 179 isn't blocked by an ACL or firewall, the neighbor IP and remote-as on both sides, update-source for loopback peering, and ebgp-multihop if the eBGP peer isn't directly connected.", "level": "Intermediate"},
+      {"q": "Why does iBGP need a full mesh, and what are the alternatives?", "a": "iBGP split horizon: a router doesn't advertise a route learned from one iBGP peer to another iBGP peer, to prevent loops inside the AS. So every iBGP router must peer with every other one. Route reflectors (reflect routes to clients) or confederations (sub-ASes) remove the full-mesh requirement.", "level": "Advanced"},
+      {"q": "You have two ISPs. How do you make ISP A the preferred path for outbound traffic?", "a": "Set a higher local preference on routes received from ISP A (for example with an inbound route-map setting local-preference 200). Local preference is shared inside your AS, so all your routers prefer ISP A. On a single router you could also use weight, which is Cisco-local.", "level": "Advanced"},
+      {"q": "How can you influence which ISP is used for inbound traffic?", "a": "Inbound is harder because other ASes decide. Common tools: AS-path prepending on the backup link so it looks longer, advertising more specific prefixes on the preferred link, MED (only between you and the same neighbor AS), and ISP-specific BGP communities that set local preference inside the ISP.", "level": "Advanced"},
+      {"q": "iBGP routes are in the BGP table but not in the routing table. Why?", "a": "Usually the next hop is unreachable: iBGP keeps the external next hop, and if the IGP doesn't know it, the route isn't valid. Fix with 'next-hop-self' on the edge router or by advertising the link into the IGP. Also check synchronization on very old IOS, and whether a better AD route exists.", "level": "Advanced"},
+      {"q": "What is the difference between a soft reset and a hard reset of a BGP session?", "a": "A hard reset ('clear ip bgp x.x.x.x') tears down the TCP session and all routes, causing an outage. A soft reset ('clear ip bgp x.x.x.x soft in/out') re-applies policy without dropping the session, using route refresh or stored routes. Always prefer soft reset in production.", "level": "Intermediate"}
+    ]
+  },
+  {
+    "id": "eigrp",
+    "subject": "Networking",
+    "title": "EIGRP",
+    "level": "Intermediate",
+    "tags": ["eigrp", "dual", "feasible successor", "successor", "variance", "stub", "stuck in active"],
+    "key_points": [
+      "Advanced distance-vector protocol using DUAL; IP protocol 88; multicast 224.0.0.10.",
+      "AD 90 internal, 170 external, 5 for a summary route.",
+      "Default metric uses bandwidth (slowest link) and cumulative delay (K1 and K3).",
+      "Successor = best path (lowest feasible distance); a feasible successor is a backup whose reported distance is lower than the current feasible distance (feasibility condition).",
+      "With a feasible successor, failover is immediate; without one, the route goes Active and queries are sent.",
+      "EIGRP stub routers limit query scope and help prevent stuck-in-active; 'variance' enables unequal-cost load balancing."
+    ],
+    "commands": ["show ip eigrp neighbors", "show ip eigrp topology", "show ip eigrp topology all-links", "show ip route eigrp", "show ip protocols"],
+    "qa": [
+      {"q": "What is a feasible successor and why does it matter?", "a": "A backup route whose reported distance (the neighbor's own distance) is lower than the current feasible distance. That guarantees it is loop-free, so EIGRP can switch to it instantly without sending queries when the successor fails.", "level": "Intermediate"},
+      {"q": "What does 'stuck in active' mean and how do you prevent it?", "a": "A route went Active and a query wasn't answered within the active timer (3 minutes by default), so the neighbor is reset. It is usually caused by queries spreading too far across a large or unstable network. Prevent it with summarization and stub routing to limit query scope, and fix unstable links.", "level": "Advanced"},
+      {"q": "Which values must match for EIGRP neighbors to form?", "a": "The AS number, the K values, being on the same subnet, and authentication if it's configured. Hello and hold timers don't have to match. With named mode, the address-family AS number must match.", "level": "Beginner"},
+      {"q": "How does EIGRP unequal-cost load balancing work?", "a": "With 'variance N', EIGRP installs feasible successors whose metric is within N times the best metric and splits traffic in proportion to the metrics. Only routes that meet the feasibility condition can be used, so it stays loop-free.", "level": "Advanced"}
+    ]
+  },
+  {
+    "id": "fhrp",
+    "subject": "Networking",
+    "title": "First Hop Redundancy (HSRP, VRRP, GLBP)",
+    "level": "Intermediate",
+    "tags": ["hsrp", "vrrp", "glbp", "gateway", "redundancy", "preempt", "tracking", "virtual ip"],
+    "key_points": [
+      "FHRPs give hosts a virtual default gateway IP and MAC that survive a router failure.",
+      "HSRP (Cisco): active/standby, default priority 100, preempt disabled by default, hello 3 s / hold 10 s; v1 virtual MAC 0000.0c07.acXX.",
+      "VRRP (open standard, RFC 5798): master/backup, preempt enabled by default, virtual MAC 0000.5e00.01XX; the real interface IP can be the virtual IP.",
+      "GLBP (Cisco) load-balances by answering ARP with different virtual MACs (AVG and AVFs).",
+      "Use object tracking to lower priority when the uplink fails, combined with preempt so the other router takes over."
+    ],
+    "commands": ["show standby brief", "show vrrp brief", "show glbp brief", "show track"],
+    "qa": [
+      {"q": "Your primary HSRP router's WAN link fails but it stays active. How do you fix this?", "a": "Configure object tracking on the WAN interface or a route, decrement the HSRP priority when it goes down (for example 'standby 1 track 1 decrement 20'), and enable 'standby 1 preempt' on both routers so the standby takes over when its priority becomes higher.", "level": "Intermediate"},
+      {"q": "What are the main differences between HSRP and VRRP?", "a": "HSRP is Cisco proprietary with active/standby roles and preemption off by default; VRRP is an open standard with master/backup roles and preemption on by default. VRRP can use a real interface address as the virtual IP. Timers and virtual MAC formats also differ.", "level": "Beginner"},
+      {"q": "Both routers show HSRP Active at the same time. What would you check?", "a": "They aren't hearing each other's hellos. Check layer 2 between them (VLAN, trunk allowed VLANs, STP blocking), ACLs blocking the multicast (224.0.0.2 for v1, 224.0.0.102 for v2), matching group number and version, and authentication.", "level": "Intermediate"}
+    ]
+  },
+  {
+    "id": "services-nat-acl",
+    "subject": "Networking",
+    "title": "NAT, ACLs, DHCP and DNS",
+    "level": "Beginner",
+    "tags": ["nat", "pat", "acl", "access list", "wildcard", "dhcp", "dora", "ip helper", "dns", "arp"],
+    "key_points": [
+      "NAT terms: inside local (private host IP), inside global (translated public IP), outside global, outside local.",
+      "PAT (NAT overload) maps many inside hosts to one public IP using port numbers.",
+      "ACLs are processed top-down, first match wins, with an implicit deny at the end.",
+      "Standard ACLs match source only (place near the destination); extended ACLs match source, destination, protocol and ports (place near the source).",
+      "DHCP uses DORA (Discover, Offer, Request, Acknowledge) on UDP 67/68; 'ip helper-address' relays it across subnets.",
+      "DNS uses UDP 53 for most queries and TCP 53 for zone transfers and large responses.",
+      "ARP maps an IPv4 address to a MAC address on the local subnet; hosts ARP for the gateway when the destination is remote."
+    ],
+    "commands": ["show ip nat translations", "show ip nat statistics", "show access-lists", "show ip dhcp binding", "show arp", "nslookup / dig"],
+    "qa": [
+      {"q": "Users can reach the internet by IP address but not by name. How do you troubleshoot?", "a": "That points at DNS. Check the DNS servers the client received (ipconfig /all), whether the client can reach them on UDP/TCP 53 (firewall rules), and test with nslookup or dig against the configured server and a known public resolver. Also check the DNS server's own forwarders.", "level": "Beginner"},
+      {"q": "Clients in a new VLAN aren't getting DHCP addresses. What do you check?", "a": "DHCP broadcasts don't cross routers, so check 'ip helper-address' on the new VLAN's SVI pointing to the DHCP server. Then check that the server has a scope for that subnet, that the SVI is up, the VLAN exists and is allowed on trunks, and no ACL or firewall blocks UDP 67/68.", "level": "Beginner"},
+      {"q": "What is the difference between static NAT, dynamic NAT and PAT?", "a": "Static NAT is a permanent one-to-one mapping, used for servers that must be reachable from outside. Dynamic NAT maps inside hosts to a pool of public addresses one-to-one as needed. PAT maps many inside hosts to a single public address by tracking port numbers, and is what most internet edges use.", "level": "Beginner"},
+      {"q": "Where should you place standard and extended ACLs, and why?", "a": "Standard ACLs only match the source, so place them close to the destination to avoid blocking traffic to other places. Extended ACLs are precise, so place them close to the source to drop unwanted traffic early and save bandwidth.", "level": "Beginner"},
+      {"q": "Explain the DHCP DORA process.", "a": "The client broadcasts a Discover, servers reply with an Offer, the client broadcasts a Request for one offer (telling the other servers no), and the chosen server confirms with an Acknowledge containing the lease, gateway, DNS and other options.", "level": "Beginner"}
+    ]
+  },
+  {
+    "id": "troubleshooting-method",
+    "subject": "Networking",
+    "title": "Troubleshooting Methodology",
+    "level": "Intermediate",
+    "tags": ["troubleshooting", "methodology", "osi", "layer", "outage", "root cause", "packet capture", "traceroute"],
+    "key_points": [
+      "Define the problem: expected vs actual behaviour, when it started, what changed, one user or many.",
+      "Choose an approach: bottom-up (physical first), top-down (application first), divide-and-conquer (start at the layer you suspect) or follow-the-path (hop by hop).",
+      "Collect evidence before changing things; change one thing at a time and verify.",
+      "Useful evidence: interface counters and errors, logs, ARP and MAC tables, routing tables, firewall logs and session tables, packet captures.",
+      "After fixing, confirm with the user, document root cause and prevention, and review monitoring."
+    ],
+    "commands": ["ping", "traceroute", "show interfaces (errors/CRC/drops)", "show logging", "show mac address-table", "show arp", "monitor capture / tcpdump / diagnose sniffer packet"],
+    "qa": [
+      {"q": "A user says 'the network is slow'. How do you approach it?", "a": "Clarify first: which application, since when, from where, one user or many. Then measure: latency and loss with ping/traceroute, interface utilisation and errors along the path, and whether the delay is network or server (compare other apps, check TCP handshake time in a capture). Avoid guessing: find evidence before changing anything.", "level": "Intermediate"},
+      {"q": "Interfaces show increasing CRC errors. What does that tell you?", "a": "Frames are arriving corrupted, which points at layer 1: a bad cable, bad optic or transceiver, dirty fibre, a duplex mismatch (late collisions on the half-duplex side) or electrical interference. Check both ends, replace the cable or optic and watch whether the counters keep increasing.", "level": "Intermediate"},
+      {"q": "Tell me about a major outage you handled. How should you structure the answer?", "a": "Use STAR: the Situation (impact and scope), your Task, the Actions you took (how you isolated the fault, communicated and restored service) and the Result (time to restore, root cause, and what you changed to prevent it). Mention communication and the post-incident review, not only the technical fix.", "level": "Intermediate"}
+    ]
+  }
+]

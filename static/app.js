@@ -700,6 +700,118 @@ async function loadModes() {
   }
 }
 
+// ---------- Study library ----------
+const library = { topics: null, subject: "All", query: "" };
+
+async function openLibrary() {
+  $("libraryPanel").hidden = false;
+  if (!library.topics) {
+    $("libraryBody").innerHTML = '<p class="muted">Loading…</p>';
+    const res = await api("/api/library");
+    if (!res.ok) { $("libraryBody").innerHTML = '<p class="muted">Could not load the library.</p>'; return; }
+    library.topics = (await res.json()).topics;
+    renderSubjects();
+  }
+  renderLibrary();
+}
+
+function renderSubjects() {
+  const subjects = ["All", ...new Set(library.topics.map((t) => t.subject))];
+  const box = $("librarySubjects");
+  box.innerHTML = "";
+  for (const sub of subjects) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip";
+    b.textContent = sub;
+    b.setAttribute("aria-pressed", String(sub === library.subject));
+    b.addEventListener("click", () => {
+      library.subject = sub;
+      box.querySelectorAll(".chip").forEach((c) => c.setAttribute("aria-pressed", String(c === b)));
+      renderLibrary();
+    });
+    box.appendChild(b);
+  }
+}
+
+function practice(text, mode = null) {
+  $("libraryPanel").hidden = true;
+  unlockAudio();
+  send(text, mode);
+}
+
+function renderLibrary() {
+  const q = library.query.trim().toLowerCase();
+  const match = (text) => !q || text.toLowerCase().includes(q);
+  const body = $("libraryBody");
+  body.innerHTML = "";
+  let topicCount = 0, qaCount = 0;
+  for (const t of library.topics) {
+    if (library.subject !== "All" && t.subject !== library.subject) continue;
+    const topicHit = match(t.title) || t.key_points.some(match);
+    const qas = t.qa.filter((x) => topicHit || match(x.q) || match(x.a));
+    if (!topicHit && !qas.length) continue;
+    topicCount++;
+    qaCount += qas.length;
+
+    const d = document.createElement("details");
+    d.className = "lib-topic";
+    if (q) d.open = true;
+    d.innerHTML = `<summary><span>${escapeHtml(t.title)}</span><span class="meta">${escapeHtml(t.subject)} · ${qas.length} Q&amp;A</span></summary>`;
+    const inner = document.createElement("div");
+    inner.className = "lib-inner";
+    let html = `<h4>Key points</h4><ul class="points">${t.key_points.map((p) => `<li>${escapeHtml(p)}</li>`).join("")}</ul>`;
+    if (t.commands.length) html += `<h4>Commands</h4><pre>${escapeHtml(t.commands.join("\n"))}</pre>`;
+    html += `<h4>Questions</h4>`;
+    inner.innerHTML = html;
+    for (const item of qas) {
+      const qd = document.createElement("details");
+      qd.className = "qa";
+      qd.innerHTML = `<summary>${escapeHtml(item.q)}<span class="lvl">${escapeHtml(item.level)}</span></summary>
+        <p class="answer">${escapeHtml(item.a)}</p>`;
+      const actions = document.createElement("div");
+      actions.className = "qa-actions";
+      const practiceBtn = document.createElement("button");
+      practiceBtn.type = "button";
+      practiceBtn.className = "ghost";
+      practiceBtn.textContent = "🎯 Practice with tutor";
+      practiceBtn.addEventListener("click", () => practice(
+        `Ask me this question, wait for my answer, then score it out of 10 against the library's model answer and show me a better answer: "${item.q}"`));
+      const listenBtn = document.createElement("button");
+      listenBtn.type = "button";
+      listenBtn.className = "ghost";
+      listenBtn.textContent = "🔊 Listen";
+      listenBtn.addEventListener("click", () => { unlockAudio(); tts.cancel(); tts.speak(item.a); });
+      actions.append(practiceBtn, listenBtn);
+      qd.appendChild(actions);
+      inner.appendChild(qd);
+    }
+    const ta = document.createElement("div");
+    ta.className = "lib-topic-actions";
+    for (const [label, text, mode] of [
+      ["📖 Teach me this", `Teach me ${t.title}`, "teach"],
+      ["❓ Quiz me", `Quiz me on ${t.title}`, "quiz"],
+      ["💼 Interview me", `Interview me on ${t.title}`, "interview"],
+    ]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ghost";
+      b.textContent = label;
+      b.addEventListener("click", () => practice(text, mode));
+      ta.appendChild(b);
+    }
+    inner.appendChild(ta);
+    d.appendChild(inner);
+    body.appendChild(d);
+  }
+  $("libraryCount").textContent = `${topicCount} topics · ${qaCount} questions with model answers`;
+  if (!topicCount) body.innerHTML = '<p class="muted">No matches. Try another word, or ask the tutor directly.</p>';
+}
+
+$("libraryBtn").addEventListener("click", openLibrary);
+$("closeLibrary").addEventListener("click", () => { $("libraryPanel").hidden = true; });
+$("librarySearch").addEventListener("input", (e) => { library.query = e.target.value; renderLibrary(); });
+
 // ---------- Progress panel ----------
 async function loadProgress() {
   const res = await api("/api/progress");

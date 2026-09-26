@@ -231,3 +231,33 @@ button { font: inherit; cursor: pointer; }
   .top-actions { gap: 6px; width: 100%; justify-content: flex-start; }
   .top-actions .ghost, .seg-btn { padding: 6px 9px; font-size: .9rem; }
 }
+
+/* ---------- Study library ---------- */
+.panel.library { width: min(520px, 100%); z-index: 11; }
+.lib-search {
+  width: 100%; margin: 8px 0; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font: inherit;
+}
+.lib-subjects { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.lib-subjects .chip[aria-pressed="true"] { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.lib-topic { border: 1px solid var(--border); border-radius: 12px; margin: 10px 0; overflow: hidden; }
+.lib-topic > summary {
+  list-style: none; cursor: pointer; padding: 10px 12px; display: flex; justify-content: space-between;
+  align-items: center; gap: 8px; font-weight: 600;
+}
+.lib-topic > summary::-webkit-details-marker { display: none; }
+.lib-topic > summary .meta { font-weight: 400; font-size: .78rem; color: var(--muted); white-space: nowrap; }
+.lib-topic[open] > summary { border-bottom: 1px solid var(--border); background: var(--accent-soft); }
+.lib-inner { padding: 8px 12px 12px; }
+.lib-inner h4 { margin: 10px 0 4px; font-size: .85rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.lib-inner ul.points { padding-left: 18px; margin: 0; list-style: disc; }
+.lib-inner ul.points li { border: 0; padding: 2px 0; }
+.lib-inner pre { background: var(--code-bg); color: var(--code-text); padding: 8px 10px; border-radius: 8px; overflow-x: auto; font-size: .8rem; margin: 4px 0; white-space: pre-wrap; }
+.qa { border-top: 1px dashed var(--border); padding: 8px 0; }
+.qa > summary { cursor: pointer; font-size: .92rem; }
+.qa .lvl { font-size: .72rem; color: var(--muted); margin-left: 4px; }
+.qa .answer { margin: 6px 0; font-size: .9rem; line-height: 1.5; }
+.qa-actions { display: flex; gap: 8px; }
+.qa-actions button { font-size: .82rem; padding: 5px 10px; }
+.lib-topic-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.lib-topic-actions button { font-size: .82rem; padding: 5px 10px; }

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "english-grammar",
+    "subject": "English",
+    "title": "Common English Corrections for Technical Professionals",
+    "level": "Beginner",
+    "tags": ["english", "grammar", "present perfect", "since", "for", "articles", "prepositions", "common mistakes", "correction"],
+    "key_points": [
+      "Present perfect continuous for something that started in the past and continues: 'I have been working in the UAE since 2015.'",
+      "'Since' + a point in time (since 2015); 'for' + a duration (for ten years).",
+      "Say 'I have 15 years of experience', not 'I am having 15 years experience'.",
+      "'Discuss' takes no preposition: 'discuss the design', not 'discuss about the design'.",
+      "'Revert' means reply or go back; 'revert back' is redundant. In international email, prefer 'reply' or 'get back to you'.",
+      "Use 'the' with some country names: the UAE, the UK, the USA, the Netherlands.",
+      "Avoid 'do the needful' and 'prepone'; say 'please take the necessary action' and 'bring the meeting forward'."
+    ],
+    "commands": [],
+    "qa": [
+      {"q": "Correct this: 'I am working in UAE from 2015.'", "a": "'I have been working in the UAE since 2015.' Use the present perfect continuous for an action that started in the past and continues now, 'since' with a starting point, and 'the' before UAE.", "level": "Beginner"},
+      {"q": "Correct this: 'I am having 15 years experience in networking.'", "a": "'I have 15 years of experience in networking.' 'Have' for possession isn't used in the continuous form, and 'years of experience' needs 'of'.", "level": "Beginner"},
+      {"q": "Correct this: 'Let's discuss about the firewall migration.'", "a": "'Let's discuss the firewall migration.' 'Discuss' is followed directly by its object. You can say 'talk about' or 'have a discussion about'.", "level": "Beginner"},
+      {"q": "Correct this: 'Please revert back with the logs.'", "a": "'Please reply with the logs' or 'Please send me the logs.' 'Revert back' is redundant, and 'revert' is confusing for many international readers.", "level": "Beginner"},
+      {"q": "When do you use 'since' and when 'for'?", "a": "'Since' with a point in time: since 2015, since Monday, since the upgrade. 'For' with a length of time: for ten years, for two hours. Example: 'The link has been down since 9 a.m.' / 'The link has been down for three hours.'", "level": "Beginner"},
+      {"q": "Make this sentence more professional: 'The network was down because of some issue, we fixed it.'", "a": "'The network outage was caused by a failed core switch power supply. We restored service within 20 minutes and have added monitoring to detect this earlier.' Be specific about the cause, the impact and the follow-up action.", "level": "Intermediate"}
+    ]
+  },
+  {
+    "id": "interview-skills",
+    "subject": "English",
+    "title": "Interview Communication (STAR, Tell Me About Yourself)",
+    "level": "Intermediate",
+    "tags": ["interview", "star", "behavioral", "tell me about yourself", "strengths", "weakness", "salary", "why should we hire you", "communication"],
+    "key_points": [
+      "Answer behavioural questions with STAR: Situation, Task, Action, Result, and quantify the result.",
+      "'Tell me about yourself': present (current role and scope), past (key achievements), future (why this role), in about 90 seconds.",
+      "Speak in short, clear sentences; pause instead of using fillers like 'basically' or 'actually'.",
+      "Use 'I' for your actions and 'we' for team outcomes; interviewers want to know what you personally did.",
+      "Prepare three to five stories (outage, migration, conflict, automation win, learning something new) that you can adapt to many questions.",
+      "End with thoughtful questions about the team, the network and the challenges of the role."
+    ],
+    "commands": [],
+    "qa": [
+      {"q": "Give a strong 'Tell me about yourself' answer for a Senior Network Engineer role.", "a": "Example: 'I'm a Senior Network Engineer with over 15 years of experience, currently in Dubai, responsible for enterprise routing, switching and security across Cisco and Fortinet environments. I hold CCNP Enterprise, Security and Data Center. Recently I led a firewall migration and rolled out 802.1X with Cisco ISE across multiple sites. I'm also building skills in Python automation and AI, and I'm looking for a role where I can combine deep network expertise with automation to improve reliability at scale.'", "level": "Intermediate"},
+      {"q": "How do you answer 'What is your biggest weakness?'", "a": "Pick a real but non-critical weakness, show awareness, and explain what you're doing about it. For example: 'I used to fix problems myself instead of documenting them for the team. Now I write a short runbook after every incident, which has reduced repeat escalations.'", "level": "Intermediate"},
+      {"q": "How should you answer a salary expectation question?", "a": "Give a researched range, anchored to the market and your experience, and show flexibility on the total package. For example: 'Based on my experience and the market for this role, I'm looking for a range of X to Y, and I'm open to discussing the overall package.'", "level": "Intermediate"},
+      {"q": "Tell me about a time you disagreed with a manager or colleague. What makes a good answer?", "a": "Use STAR, stay professional and focus on data: explain the disagreement (for example, a risky change without a rollback plan), how you raised it respectfully with evidence, the compromise or decision, and the positive result. Show you can disagree and still commit to the team decision.", "level": "Intermediate"},
+      {"q": "Why should we hire you?", "a": "Connect your strengths to their needs in three points: deep hands-on experience in their technologies, a track record of results (outages resolved, migrations delivered, automation that saved time), and the soft skills they need (clear communication, mentoring, calm under pressure). Finish with enthusiasm for their specific challenges.", "level": "Intermediate"}
+    ]
+  }
+]

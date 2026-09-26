@@ -1,0 +1,132 @@
+[
+  {
+    "id": "firewalls",
+    "subject": "Cybersecurity",
+    "title": "Firewalls and NGFW (FortiGate, Palo Alto)",
+    "level": "Intermediate",
+    "tags": ["firewall", "ngfw", "fortigate", "fortinet", "palo alto", "policy", "zone", "stateful", "app-id", "ssl inspection", "ha", "session"],
+    "key_points": [
+      "Stateful firewalls track sessions, so return traffic is allowed automatically; policies are matched top-down, first match wins, with an implicit deny at the end.",
+      "NGFWs add application identification, user identity, IPS, URL filtering, anti-malware and SSL/TLS inspection.",
+      "Palo Alto security rules match the pre-NAT IP addresses and the post-NAT zones; App-ID identifies the application regardless of port.",
+      "FortiGate policies are matched by incoming interface/zone, outgoing interface, source, destination and service; VDOMs split one FortiGate into virtual firewalls.",
+      "HA is usually active-passive (FortiGate FGCP, Palo Alto HA pair) with session synchronisation so failover keeps existing sessions.",
+      "Use 'deny all' logging and hit counts to find unused rules; review and clean up rulebases regularly."
+    ],
+    "commands": [
+      "FortiGate: diagnose debug flow filter addr <ip>; diagnose debug flow show function-name enable; diagnose debug enable; diagnose debug flow trace start 10",
+      "FortiGate: diagnose sniffer packet any 'host <ip>' 4",
+      "FortiGate: get router info routing-table all; diagnose sys session list",
+      "Palo Alto: test security-policy-match from <zone> to <zone> source <ip> destination <ip> protocol 6 destination-port 443",
+      "Palo Alto: show session all filter source <ip>; show counter global filter delta yes"
+    ],
+    "qa": [
+      {"q": "Traffic through a FortiGate is being dropped. How do you find out why?", "a": "Use the debug flow: set 'diagnose debug flow filter addr <ip>', enable function names, 'diagnose debug enable' and 'diagnose debug flow trace start 10', then generate traffic. The output shows the route lookup, the policy that matched (or 'denied by forward policy check') and NAT. Combine it with 'diagnose sniffer packet' to confirm packets arrive and leave.", "level": "Intermediate"},
+      {"q": "On a Palo Alto, how do you check which rule would match a flow without sending traffic?", "a": "Use 'test security-policy-match from <src-zone> to <dst-zone> source <ip> destination <ip> protocol <n> destination-port <port>'. Remember Palo Alto matches the pre-NAT addresses with the post-NAT destination zone, which is a common source of confusion with destination NAT.", "level": "Intermediate"},
+      {"q": "What is the difference between a stateful firewall and an NGFW?", "a": "A stateful firewall allows or blocks based on IPs, ports and connection state. An NGFW adds layer 7 visibility: it identifies applications and users, and can do IPS, URL filtering, anti-malware and TLS decryption, so you can write policies like 'allow Office 365 for Finance' instead of 'allow TCP 443 from this subnet'.", "level": "Beginner"},
+      {"q": "Why is SSL/TLS inspection important, and what are the risks?", "a": "Most traffic is encrypted, so without inspection IPS, anti-malware and many app controls are blind. The risks are privacy and compliance (banking, healthcare sites are usually excluded), certificate trust (the firewall's CA must be deployed to clients), apps that break with certificate pinning, and extra CPU load, so you exempt categories carefully.", "level": "Intermediate"},
+      {"q": "How does Palo Alto handle destination NAT in security policy?", "a": "For inbound DNAT to a server, the security rule uses the original public destination IP (pre-NAT) but the zone of the server after NAT (post-NAT zone). The NAT rule itself uses the original zones. Getting this wrong is the classic reason DNAT 'doesn't work' on a Palo Alto.", "level": "Advanced"},
+      {"q": "What would you check if a firewall HA failover didn't happen when it should have?", "a": "HA status and priorities on both units, whether preemption is configured, the heartbeat/HA links, and whether link or path monitoring is actually configured on the interface that failed. Also check session sync, and that the failover conditions (monitored interfaces, thresholds) match what you expected.", "level": "Advanced"}
+    ]
+  },
+  {
+    "id": "vpn-ipsec",
+    "subject": "Cybersecurity",
+    "title": "VPNs and IPsec",
+    "level": "Intermediate",
+    "tags": ["vpn", "ipsec", "ike", "ikev2", "phase 1", "phase 2", "esp", "nat-t", "ssl vpn", "site-to-site", "proxy id", "traffic selector", "dpd"],
+    "key_points": [
+      "IKE uses UDP 500, and UDP 4500 when NAT traversal is detected; ESP is IP protocol 50, AH is 51.",
+      "IKEv1 phase 1 (main mode 6 messages or aggressive mode 3) builds the IKE SA; phase 2 (quick mode) builds the IPsec SAs.",
+      "IKEv2 is simpler: IKE_SA_INIT and IKE_AUTH (4 messages) create the IKE SA and the first child SA.",
+      "Both sides must agree on encryption, integrity, DH group, lifetime and authentication (PSK or certificates).",
+      "Policy-based VPNs define interesting traffic with proxy IDs/traffic selectors that must mirror each other; route-based VPNs use a tunnel interface and routing.",
+      "PFS forces a new DH exchange for phase 2 keys; DPD detects a dead peer."
+    ],
+    "commands": [
+      "Cisco: show crypto isakmp sa; show crypto ikev2 sa; show crypto ipsec sa",
+      "FortiGate: diagnose vpn ike gateway list; diagnose vpn tunnel list; get vpn ipsec tunnel summary; diagnose debug application ike -1",
+      "Palo Alto: show vpn ike-sa; show vpn ipsec-sa; test vpn ike-sa gateway <name>; test vpn ipsec-sa tunnel <name>"
+    ],
+    "qa": [
+      {"q": "Phase 1 of a site-to-site VPN is up but phase 2 fails. What do you check?", "a": "Phase 2 parameters: the proxy IDs/traffic selectors (local and remote subnets must mirror each other exactly), the transform set or phase 2 proposal (encryption, integrity), PFS and its DH group, and lifetimes. The IKE debug on either side usually says 'no proposal chosen' or 'traffic selectors unacceptable'.", "level": "Intermediate"},
+      {"q": "Phase 1 won't come up at all. What are the common causes?", "a": "No reachability between the peers' public IPs, UDP 500/4500 blocked, wrong peer IP, pre-shared key mismatch, mismatched IKE version, or phase 1 proposal mismatch (encryption, hash, DH group). With NAT in the path, check that NAT-T is enabled and UDP 4500 is allowed.", "level": "Intermediate"},
+      {"q": "What is the difference between a route-based and a policy-based VPN?", "a": "A policy-based VPN encrypts traffic that matches a policy or crypto ACL, with fixed selectors. A route-based VPN uses a tunnel interface (VTI) and the routing table decides what goes into the tunnel, which supports dynamic routing (BGP/OSPF over the tunnel), easier redundancy and simpler changes. Most modern designs are route-based.", "level": "Intermediate"},
+      {"q": "Why does IPsec need NAT traversal?", "a": "ESP has no port numbers, so PAT devices can't track it, and AH breaks when addresses change. NAT-T detects NAT during IKE and wraps ESP in UDP 4500, so NAT devices can translate it normally.", "level": "Intermediate"},
+      {"q": "What is Perfect Forward Secrecy?", "a": "With PFS, each phase 2 key is generated with a fresh Diffie-Hellman exchange instead of being derived from the phase 1 key material. If one key is ever compromised, earlier and later session keys are still safe. Both peers must agree on whether PFS is used and on the DH group.", "level": "Advanced"},
+      {"q": "The tunnel is up but traffic doesn't pass. What do you check?", "a": "Routing into the tunnel (route-based) or the selectors (policy-based), firewall policies allowing the traffic, NAT exemption so the traffic isn't NATed before encryption, the encrypt/decrypt counters on both sides to see which direction fails, and MTU/MSS issues if only large packets fail.", "level": "Advanced"}
+    ]
+  },
+  {
+    "id": "nac-ise",
+    "subject": "Cybersecurity",
+    "title": "NAC, 802.1X and Cisco ISE",
+    "level": "Advanced",
+    "tags": ["nac", "802.1x", "ise", "radius", "tacacs", "mab", "eap", "peap", "eap-tls", "posture", "profiling", "coa", "dacl", "trustsec", "sgt"],
+    "key_points": [
+      "802.1X roles: supplicant (client), authenticator (switch/WLC) and authentication server (RADIUS, e.g. Cisco ISE).",
+      "EAP methods: EAP-TLS (certificates on both sides, strongest), PEAP-MSCHAPv2 (username/password inside a TLS tunnel), EAP-FAST, TEAP.",
+      "MAB (MAC Authentication Bypass) is the fallback for devices without a supplicant, such as printers and IP phones.",
+      "RADIUS: UDP 1812 authentication, 1813 accounting; CoA is UDP 1700 on Cisco devices (RFC 5176 default 3799).",
+      "TACACS+ uses TCP 49, encrypts the whole payload and separates authentication, authorisation and accounting, so it's preferred for device administration.",
+      "ISE authorisation results can assign a VLAN, a downloadable ACL (dACL) or a Security Group Tag (TrustSec).",
+      "Deploy in monitor mode first, then low-impact, then closed mode to avoid locking users out."
+    ],
+    "commands": ["show access-session interface <int> details", "show authentication sessions interface <int> details", "show radius statistics", "test aaa group radius <user> <password> new-code", "show aaa servers"],
+    "qa": [
+      {"q": "Explain how 802.1X authentication works end to end.", "a": "The switch port starts unauthorised. The client (supplicant) sends EAPoL to the switch (authenticator), which relays the EAP messages inside RADIUS to ISE (authentication server). ISE runs the EAP method, for example EAP-TLS, checks the identity and policy, and returns Access-Accept with authorisation such as a VLAN or dACL. The switch then authorises the port.", "level": "Intermediate"},
+      {"q": "What is the difference between RADIUS and TACACS+?", "a": "RADIUS uses UDP, only encrypts the password and combines authentication and authorisation, which suits network access (802.1X, VPN). TACACS+ uses TCP 49, encrypts the whole payload and separates AAA, so you can authorise individual commands, which makes it the standard for device administration.", "level": "Beginner"},
+      {"q": "A printer doesn't support 802.1X. How do you handle it?", "a": "Use MAB: the switch sends the printer's MAC address to ISE as the identity. Combine it with ISE profiling so only MACs profiled as printers are allowed, and give them a restricted dACL or SGT, because MAC addresses can be spoofed.", "level": "Intermediate"},
+      {"q": "Why roll out 802.1X in monitor mode first?", "a": "Monitor mode (open authentication) lets every device connect while ISE logs what would have passed or failed. You find unmanaged devices, missing certificates and wrong policies without an outage, then move to low-impact and finally closed mode.", "level": "Intermediate"},
+      {"q": "What is Change of Authorization (CoA) used for?", "a": "CoA lets ISE change an active session without the user reconnecting, for example re-authenticating a client after posture assessment, moving it from a remediation VLAN to the production VLAN, or bouncing the port after profiling identifies the device.", "level": "Advanced"},
+      {"q": "Why is EAP-TLS considered the strongest EAP method?", "a": "Both the client and the server authenticate with certificates, so there's no password to steal or phish, and it resists man-in-the-middle attacks. The trade-off is that you need a PKI to issue and renew client certificates.", "level": "Intermediate"}
+    ]
+  },
+  {
+    "id": "zero-trust",
+    "subject": "Cybersecurity",
+    "title": "Zero Trust, Segmentation and Security Fundamentals",
+    "level": "Intermediate",
+    "tags": ["zero trust", "ztna", "segmentation", "microsegmentation", "least privilege", "mfa", "ids", "ips", "waf", "ddos", "edr", "dlp", "defense in depth"],
+    "key_points": [
+      "Zero Trust: never trust, always verify; verify identity, device posture and context for every access request.",
+      "Apply least privilege and assume breach; segment the network so an attacker can't move laterally.",
+      "ZTNA gives users access to specific applications rather than the whole network, unlike traditional VPN.",
+      "IDS detects and alerts out of band; IPS sits inline and can block.",
+      "A WAF protects web applications from attacks such as SQL injection and XSS; DDoS protection absorbs volumetric and protocol attacks.",
+      "EDR monitors endpoints for malicious behaviour; DLP stops sensitive data leaving; MFA blocks most credential attacks."
+    ],
+    "commands": [],
+    "qa": [
+      {"q": "What does Zero Trust mean in practice for a network engineer?", "a": "Stop trusting traffic because of where it comes from. Authenticate users and devices (802.1X, MFA, posture), segment the network (VLANs/VRFs, firewalls, SGTs or microsegmentation), allow only what each role needs, inspect traffic between segments, and log and monitor continuously.", "level": "Intermediate"},
+      {"q": "What is the difference between IDS and IPS?", "a": "An IDS watches a copy of the traffic and alerts, so it can't stop an attack by itself. An IPS sits inline and can drop malicious traffic in real time. IPS needs careful tuning because false positives block legitimate traffic.", "level": "Beginner"},
+      {"q": "How is ZTNA different from a traditional remote-access VPN?", "a": "A VPN usually puts the user on the network, where they can reach much more than they need. ZTNA brokers access to specific applications after checking identity and device posture on every session, hides the applications from the internet and reduces lateral movement.", "level": "Intermediate"},
+      {"q": "How would you segment a flat network with no downtime?", "a": "Start with visibility: flow data and firewall logs to map who talks to whom. Define zones (users, servers, OT, management, guests), move them into VLANs/VRFs behind an internal firewall with permissive logged rules, then tighten rules step by step based on the observed flows, one zone at a time, in maintenance windows.", "level": "Advanced"}
+    ]
+  },
+  {
+    "id": "sd-wan",
+    "subject": "Networking",
+    "title": "SD-WAN (Cisco Catalyst SD-WAN, Fortinet)",
+    "level": "Advanced",
+    "tags": ["sd-wan", "sdwan", "vmanage", "vsmart", "vbond", "omp", "bfd", "sla", "application aware routing", "fortinet sd-wan", "overlay"],
+    "key_points": [
+      "SD-WAN builds an encrypted overlay across any transport (MPLS, internet, LTE/5G) with centralised policy and management.",
+      "Cisco Catalyst SD-WAN components: Manager (vManage, management), Controller (vSmart, control plane and policy), Validator (vBond, orchestration and authentication) and WAN Edge routers.",
+      "OMP (Overlay Management Protocol) distributes routes, TLOCs and policy from the Controllers to the Edges.",
+      "BFD probes on every tunnel measure loss, latency and jitter; application-aware routing moves traffic when an SLA is violated.",
+      "Fortinet SD-WAN uses SD-WAN zones and members, performance SLA health checks, and SD-WAN rules that steer applications to the best link.",
+      "Benefits: cheaper transports, faster branch rollout (zero-touch provisioning), application-level steering and central visibility."
+    ],
+    "commands": [
+      "Cisco: show sdwan control connections; show sdwan omp peers; show sdwan bfd sessions; show sdwan app-route statistics",
+      "FortiGate: diagnose sys sdwan health-check; diagnose sys sdwan service; diagnose sys sdwan member"
+    ],
+    "qa": [
+      {"q": "What are the components of Cisco Catalyst SD-WAN and what does each do?", "a": "The Manager (vManage) is the GUI and management plane for configuration and monitoring. The Validator (vBond) authenticates devices and helps them find the other components, including through NAT. The Controller (vSmart) is the control plane: it runs OMP and pushes routes and policy. The WAN Edges forward the data traffic over IPsec tunnels.", "level": "Intermediate"},
+      {"q": "How does SD-WAN decide which link an application uses?", "a": "It measures each path continuously (BFD on Cisco, performance SLA probes on Fortinet) for loss, latency and jitter, and compares them with the SLA defined for that application class. Traffic uses the preferred link while it meets the SLA and moves to another link when it doesn't.", "level": "Intermediate"},
+      {"q": "Why would a company move from MPLS to SD-WAN?", "a": "Lower cost by using internet circuits, faster branch deployment with zero-touch provisioning, better cloud and SaaS performance with local internet breakout, application-aware steering across multiple links, and central visibility and policy. Many keep MPLS for critical sites and add internet links in a hybrid design.", "level": "Beginner"},
+      {"q": "A branch WAN Edge isn't forming control connections. What do you check?", "a": "Underlay reachability to the Validator (DNS or IP), that the device certificate and serial number are valid and allowed in the Manager, system IP, site ID and organisation name, correct time (certificates fail with a wrong clock), and that the firewall allows the DTLS/TLS ports. 'show sdwan control connections' and 'show sdwan control local-properties' show the state and errors.", "level": "Advanced"}
+    ]
+  }
+]

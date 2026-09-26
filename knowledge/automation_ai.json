@@ -1,0 +1,125 @@
+[
+  {
+    "id": "python-basics",
+    "subject": "Python",
+    "title": "Python Fundamentals",
+    "level": "Beginner",
+    "tags": ["python", "list", "tuple", "dict", "set", "loop", "function", "exception", "comprehension", "venv", "module", "class"],
+    "key_points": [
+      "Core types: int, float, str, bool, list (mutable, ordered), tuple (immutable), dict (key-value), set (unique items).",
+      "Use 'for' to iterate over items and 'while' for condition-based loops; comprehensions build lists/dicts concisely.",
+      "Functions take positional and keyword arguments; default values should never be mutable (use None instead).",
+      "Handle errors with try/except/else/finally and catch specific exceptions, not bare 'except:'.",
+      "Use virtual environments (python -m venv .venv) and requirements files to isolate project dependencies.",
+      "'with' statements (context managers) close files and connections automatically.",
+      "if __name__ == '__main__': runs code only when the file is executed directly, not when imported."
+    ],
+    "commands": ["python -m venv .venv", "pip install -r requirements.txt", "python -m pytest"],
+    "qa": [
+      {"q": "What is the difference between a list and a tuple?", "a": "A list is mutable: you can add, remove and change items. A tuple is immutable once created, which makes it hashable (usable as a dict key or set member) and signals data that shouldn't change, like an (ip, port) pair.", "level": "Beginner"},
+      {"q": "Write a list comprehension that keeps only the interfaces that are down from a list of dicts.", "a": "down = [i['name'] for i in interfaces if i['status'] == 'down']. It loops over each interface dict, filters on status and keeps the name.", "level": "Beginner"},
+      {"q": "Why shouldn't you use a list as a default argument?", "a": "Default values are created once when the function is defined, so a default list is shared between calls and keeps growing. Use 'def f(items=None):' and inside 'if items is None: items = []'.", "level": "Intermediate"},
+      {"q": "How do you handle a device that times out in a script that loops over 100 switches?", "a": "Wrap the connection in try/except for the specific timeout/authentication exceptions, log the failure with the hostname, and continue to the next device instead of crashing. At the end, print a summary of failed devices so they can be retried.", "level": "Intermediate"},
+      {"q": "What is a dictionary and when would you use one in network automation?", "a": "A mapping of unique keys to values, with fast lookups by key. Typical uses: device inventories {'core-sw1': '10.0.0.1'}, parsed command output {'Gi1/0/1': {'status': 'up', 'vlan': 10}}, and JSON from REST APIs, which maps directly to dicts and lists.", "level": "Beginner"},
+      {"q": "What are decorators and generators, briefly?", "a": "A decorator wraps a function to add behaviour (logging, retries, timing) without changing its code, using @decorator syntax. A generator uses 'yield' to produce values lazily one at a time, which saves memory when processing large outputs or log files.", "level": "Advanced"}
+    ]
+  },
+  {
+    "id": "network-automation",
+    "subject": "Python",
+    "title": "Network Automation (Netmiko, NAPALM, Nornir, Ansible, APIs)",
+    "level": "Intermediate",
+    "tags": ["automation", "netmiko", "napalm", "nornir", "ansible", "netconf", "restconf", "yang", "api", "rest", "textfsm", "idempotent", "paramiko", "gnmi"],
+    "key_points": [
+      "Netmiko: SSH to network devices; ConnectHandler(**device), send_command(), send_config_set(); use_textfsm=True parses output into structured data.",
+      "NAPALM: vendor-neutral getters (get_facts, get_interfaces, get_bgp_neighbors) and config merge/replace with compare_config and rollback.",
+      "Nornir: Python-native framework with an inventory and parallel task execution across many devices.",
+      "Ansible: agentless, YAML playbooks, network_cli/netconf/httpapi connections, idempotent modules such as cisco.ios.ios_config.",
+      "NETCONF runs over SSH (port 830) with XML; RESTCONF uses HTTPS with JSON or XML; both use YANG data models.",
+      "Idempotent means running the same automation twice gives the same end state without making unnecessary changes.",
+      "Always keep credentials out of code (environment variables or a vault), start read-only, test in a lab and use dry runs/diffs."
+    ],
+    "commands": [
+      "from netmiko import ConnectHandler",
+      "conn = ConnectHandler(device_type='cisco_ios', host='10.0.0.1', username=user, password=pw)",
+      "output = conn.send_command('show ip interface brief', use_textfsm=True)"
+    ],
+    "qa": [
+      {"q": "Write the core Netmiko code to collect 'show ip interface brief' from a Cisco switch.", "a": "from netmiko import ConnectHandler; device = {'device_type': 'cisco_ios', 'host': '10.0.0.1', 'username': user, 'password': pw}; with ConnectHandler(**device) as conn: output = conn.send_command('show ip interface brief', use_textfsm=True). With TextFSM the output is a list of dicts you can filter, for example for interfaces whose status is down.", "level": "Beginner"},
+      {"q": "When would you choose Ansible, Nornir or plain Netmiko?", "a": "Netmiko for quick scripts against a few devices. Nornir when you want Python flexibility with an inventory and fast parallel execution across many devices. Ansible when the team prefers declarative YAML, wants idempotent vendor modules and integration with AWX/Tower and change processes.", "level": "Intermediate"},
+      {"q": "What is the difference between NETCONF and RESTCONF?", "a": "Both use YANG models for structured configuration and state. NETCONF runs over SSH port 830 with XML and supports transactions, candidate configs and validation. RESTCONF is a REST-style HTTPS API using GET/POST/PUT/PATCH/DELETE with JSON or XML, which is easier to call from web tools.", "level": "Intermediate"},
+      {"q": "What does idempotent mean, and why does it matter?", "a": "Applying the same automation again produces the same result and makes no change if the device is already correct. It makes automation safe to re-run, supports 'desired state' configuration and gives clean change reports showing only real differences.", "level": "Beginner"},
+      {"q": "How would you safely push a config change to 200 switches?", "a": "Template the change (Jinja2), validate it in a lab, run a dry run that shows the diff per device, back up running configs first, push in small batches with a maintenance window, verify with post-checks (show commands or NAPALM getters), stop automatically on errors, and keep a rollback plan.", "level": "Advanced"},
+      {"q": "What is TextFSM and why is it useful?", "a": "TextFSM is a template-based parser that turns unstructured CLI output into structured data (lists of dicts). The ntc-templates project provides templates for many vendor commands, so Netmiko's use_textfsm=True gives you data you can loop over instead of screen-scraping strings.", "level": "Intermediate"}
+    ]
+  },
+  {
+    "id": "llm-basics",
+    "subject": "AI",
+    "title": "AI, Machine Learning and LLM Fundamentals",
+    "level": "Beginner",
+    "tags": ["ai", "machine learning", "deep learning", "llm", "transformer", "token", "context window", "temperature", "hallucination", "embedding", "fine-tuning", "prompt engineering", "generative ai"],
+    "key_points": [
+      "AI is the broad field; machine learning learns patterns from data; deep learning uses multi-layer neural networks; generative AI creates new content.",
+      "LLMs are transformer models trained to predict the next token; attention lets them relate every token to the others in the context.",
+      "Tokens are word pieces; the context window is the maximum number of tokens the model can consider at once.",
+      "Temperature controls randomness: low for factual or deterministic answers, higher for creative writing.",
+      "Hallucination: the model produces fluent but wrong information; reduce it with grounding (RAG), tools and verification.",
+      "Embeddings are numeric vectors that represent meaning, so similar texts are close together.",
+      "Customisation options in order of effort: prompting, RAG (add knowledge), tool use (add actions), fine-tuning (change behaviour or style)."
+    ],
+    "commands": [],
+    "qa": [
+      {"q": "Explain an LLM to a non-technical manager in two sentences.", "a": "An LLM is a model trained on huge amounts of text that predicts the most likely next word, which lets it write, summarise and answer questions. It is very capable with language but can confidently state wrong facts, so we connect it to trusted data and check important outputs.", "level": "Beginner"},
+      {"q": "What is a token and why does the context window matter?", "a": "A token is a piece of a word, roughly three to four English characters. The context window is how many tokens the model can see at once, including the prompt, documents, conversation history and its answer. Exceed it and information is cut off, and larger contexts also cost more and can be slower.", "level": "Beginner"},
+      {"q": "When would you use fine-tuning instead of RAG?", "a": "Use RAG when the model needs knowledge that changes or must be cited, such as internal documentation. Use fine-tuning to change behaviour, format or style consistently, or to specialise a smaller model for a narrow task. Often you start with prompting and RAG, and fine-tune only if that isn't enough.", "level": "Intermediate"},
+      {"q": "What causes hallucinations and how do you reduce them?", "a": "The model generates plausible text, not verified facts, so when it lacks information it may invent some. Reduce it by grounding answers in retrieved documents (RAG), asking it to cite sources and say 'I don't know', using tools for facts and calculations, lowering temperature, and evaluating outputs.", "level": "Intermediate"},
+      {"q": "What is the difference between machine learning and deep learning?", "a": "Machine learning covers algorithms that learn patterns from data, such as decision trees or linear regression, often with hand-picked features. Deep learning is a subset using many-layered neural networks that learn features automatically, which works best for images, speech and language with large datasets.", "level": "Beginner"}
+    ]
+  },
+  {
+    "id": "rag",
+    "subject": "AI",
+    "title": "RAG (Retrieval-Augmented Generation)",
+    "level": "Intermediate",
+    "tags": ["rag", "retrieval", "embeddings", "vector database", "chunking", "reranking", "hybrid search", "grounding", "evaluation"],
+    "key_points": [
+      "RAG retrieves relevant documents at question time and gives them to the LLM as context, so answers are grounded and current.",
+      "Pipeline: load documents, split into chunks, embed chunks, store in a vector database, embed the query, retrieve top-k, (rerank), generate with citations.",
+      "Chunk size and overlap matter: too big dilutes relevance, too small loses context.",
+      "Hybrid search combines keyword search (BM25) with vector similarity; it helps with exact terms like 'OSPF' or error codes.",
+      "Rerankers reorder retrieved chunks by true relevance before they are sent to the LLM.",
+      "Evaluate retrieval (did we fetch the right chunks?) separately from generation (is the answer faithful to them?)."
+    ],
+    "commands": [],
+    "qa": [
+      {"q": "Explain the RAG pipeline step by step.", "a": "Ingest documents and split them into chunks; convert each chunk into an embedding and store it in a vector database. At question time, embed the question, retrieve the most similar chunks (optionally rerank them), put them in the prompt with instructions to answer only from them and cite sources, and let the LLM generate the answer.", "level": "Intermediate"},
+      {"q": "How would you build a RAG assistant for your network documentation?", "a": "Collect runbooks, designs, configs and vendor guides; clean them and chunk by section; embed and store them with metadata (site, vendor, device type); use hybrid search because hostnames and commands need exact matches; add a reranker; instruct the model to cite documents and say when it doesn't know; restrict access by user role; and test with real questions from the team.", "level": "Advanced"},
+      {"q": "Your RAG system gives wrong answers. How do you find out whether retrieval or generation is the problem?", "a": "Look at the retrieved chunks for failing questions. If the right information isn't in them, fix retrieval: chunking, embeddings, hybrid search, metadata filters, more top-k or reranking. If it is there but the answer is wrong, fix generation: the prompt, the model, or asking it to quote the source before answering.", "level": "Advanced"},
+      {"q": "What is a vector database?", "a": "A database that stores embeddings and quickly finds the vectors most similar to a query vector (nearest-neighbour search), usually with metadata filtering. Examples include pgvector in Postgres, Pinecone, Weaviate, Qdrant, Chroma and FAISS.", "level": "Beginner"}
+    ]
+  },
+  {
+    "id": "ai-agents",
+    "subject": "AI",
+    "title": "AI Agents, Tool Use and MCP",
+    "level": "Intermediate",
+    "tags": ["agent", "agents", "tool use", "function calling", "mcp", "model context protocol", "memory", "planning", "multi-agent", "guardrails", "human in the loop", "orchestration"],
+    "key_points": [
+      "An agent is an LLM in a loop: it decides on actions, calls tools, observes results and continues until the goal is reached.",
+      "Tool/function calling: you describe tools with names, descriptions and JSON schemas; the model returns structured calls that your code executes.",
+      "Memory: short-term (the conversation) and long-term (a database, notes or a vector store the agent can read and write).",
+      "MCP (Model Context Protocol) is an open standard for connecting AI applications to tools and data sources through MCP servers.",
+      "Guardrails: validate tool inputs, limit permissions, require human approval for risky actions (config changes), log everything.",
+      "Start with a simple workflow; use an agent only when the task really needs model-driven decisions."
+    ],
+    "commands": [],
+    "qa": [
+      {"q": "What is the difference between a chatbot and an AI agent?", "a": "A chatbot answers from what's in the conversation. An agent can take actions: it plans, calls tools (APIs, databases, scripts), looks at the results and decides the next step until the task is done, for example checking device status, reading logs and suggesting a fix.", "level": "Beginner"},
+      {"q": "Design an AI network troubleshooting assistant. What tools would you give it and what guardrails?", "a": "Read-only tools first: run show commands through Netmiko or an API on allowed devices, query monitoring (SNMP/telemetry), search documentation (RAG) and check tickets. Guardrails: an allow-list of commands, no config changes without human approval, per-user device permissions, input validation, timeouts, and full logging of every tool call for audit.", "level": "Advanced"},
+      {"q": "How does function calling work?", "a": "You send the model a list of tools with names, descriptions and JSON input schemas. When the model wants one, it returns a structured call with arguments instead of text. Your code validates and executes it, sends the result back, and the model continues with the new information.", "level": "Intermediate"},
+      {"q": "What is MCP and why is it useful?", "a": "The Model Context Protocol is an open standard for exposing tools, data and prompts to AI applications through MCP servers. Instead of writing a custom integration for every app and every tool, you build one MCP server (for example for your network inventory) and any MCP-compatible AI client can use it.", "level": "Intermediate"},
+      {"q": "When should you not use an agent?", "a": "When the steps are known and fixed; then a normal script or a simple workflow with one LLM call is cheaper, faster, more predictable and easier to test. Agents are worth it when the path depends on what is discovered along the way and errors can be caught and reviewed.", "level": "Intermediate"}
+    ]
+  }
+]

@@ -21,6 +21,7 @@
         <button type="button" class="seg-btn" data-lang="ur-PK">اردو</button>
       </div>
       <button type="button" id="callBtn" class="ghost call-btn" title="One-to-one voice conversation">🤖 Talk 1:1</button>
+      <button type="button" id="libraryBtn" class="ghost">📚 Library</button>
       <button type="button" id="progressBtn" class="ghost">Progress</button>
       <button type="button" id="resetBtn" class="ghost" title="Start a new conversation (progress is kept)">New chat</button>
     </div>
@@ -94,6 +95,17 @@
     <button type="button" id="callTalk" class="call-talk">Tap to talk</button>
     <p class="credit">This AI agent is designed by <b>Rizwan Siddiqi</b></p>
   </section>
+
+  <aside id="libraryPanel" class="panel library" hidden aria-label="Study library">
+    <div class="panel-head">
+      <h2>Study library</h2>
+      <button type="button" id="closeLibrary" class="ghost" aria-label="Close">✕</button>
+    </div>
+    <p class="muted" id="libraryCount"></p>
+    <input id="librarySearch" class="lib-search" type="search" placeholder="Search topics and questions…" aria-label="Search the library">
+    <div id="librarySubjects" class="lib-subjects" role="group" aria-label="Filter by subject"></div>
+    <div id="libraryBody"></div>
+  </aside>
 
   <aside id="progressPanel" class="panel" hidden>
     <div class="panel-head">

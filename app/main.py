@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .agent import TutorAgent, load_system_prompt
+from . import knowledge
 from .groq_agent import GroqTutorAgent
 from .config import ON_VERCEL, get_settings
 from .memory import LEVELS, SUBJECTS, Memory
@@ -181,6 +182,12 @@ async def speak(req: SpeakRequest):
         logging.getLogger("tutor.tts").warning("TTS failed: %s", exc)
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
     return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/library")
+async def library():
+    """The built-in study library: topics, key points, commands and Q&A with model answers."""
+    return {"topics": knowledge.catalog()}
 
 
 @app.get("/api/progress")

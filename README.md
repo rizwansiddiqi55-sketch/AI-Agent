@@ -21,6 +21,7 @@ Browser mic ── recorded audio ──► /api/transcribe (Groq Whisper, en / 
 - **Groq** powers the tutor by default, through the official `groq` Python SDK. The default model is `openai/gpt-oss-120b`, which is fast, good at tool calling, and multilingual. Replies stream and the model's reasoning is hidden. You can change the model with `GROQ_MODEL`.
 - **Groq free plan:** requests are kept small so they fit Groq's free-tier limits (for `gpt-oss-120b`, 8,000 tokens per minute). Groq uses a condensed prompt ([`prompts/compact_system_prompt.md`](prompts/compact_system_prompt.md)) and only the recent part of the conversation; lesson, progress and notes stay available through the memory tools. If Groq asks the app to wait a few seconds, it shows "waiting" and retries on its own. For heavier daily use, Groq's pay-as-you-go Dev tier removes these limits.
 - **Claude** is also supported. Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` to use it instead. It uses the official `anthropic` SDK with adaptive thinking and prompt caching. Each provider keeps its own conversation history. Progress, notes, and lesson position are shared.
+- **Study library** ([`knowledge/`](knowledge)): 21 topics and 100+ interview/practice questions with model answers across networking (subnetting, VLAN/STP, routing, OSPF, BGP, EIGRP, FHRP, NAT/ACL/DHCP/DNS, troubleshooting, SD-WAN), security (firewalls with FortiGate/Palo Alto, IPsec VPN, NAC/802.1X/ISE, Zero Trust), Python and network automation, AI (LLMs, RAG, agents/MCP), English corrections and interview skills. The tutor uses it through the `search_knowledge` and `get_practice_questions` tools, and you can browse it with the **📚 Library** button, reveal answers, listen to them, or tap **Practice with tutor** to be asked and scored. Add more by editing or adding JSON files in `knowledge/` (same format).
 - **Memory tools** let the tutor save and read its own progress data: `update_progress`, `set_current_lesson` / `get_current_lesson`, `save_note` / `get_notes`, `log_english_correction`, and `get_learner_profile`.
 
 ## Setup
@@ -109,7 +110,8 @@ The tests use fake Claude and Groq API responses, so they need no API key or net
 
 ```
 app/
-  main.py      FastAPI routes: UI, /api/chat (SSE), /api/progress, /api/history, /api/reset
+  main.py      FastAPI routes: UI, /api/chat (SSE), /api/library, /api/progress, /api/history, /api/reset
+  knowledge.py study library loader, keyword search and practice-question picker
   groq_agent.py  Groq streaming + tool-calling loop (default provider)
   agent.py     Claude streaming + tool loop, prompt caching, refusal handling
   stt.py       speech-to-text with Groq Whisper
@@ -119,6 +121,7 @@ app/
   modes.py     quick learning-mode commands
   config.py    settings from .env
 prompts/master_system_prompt.md   the tutor's personality and teaching rules
+knowledge/     study library: topic notes and Q&A with model answers (JSON)
 static/        index.html, app.js, styles.css (voice UI)
 tests/         pytest suite
 ```

@@ -159,3 +159,11 @@ def test_tts_and_config_endpoints(memory, monkeypatch):
         assert res.content == "mp3:سلام".encode()
     finally:
         get_settings.cache_clear()
+
+
+def test_library_endpoint(memory):
+    client = make_client(memory, [])
+    topics = client.get("/api/library").json()["topics"]
+    assert len(topics) >= 20
+    ospf = next(t for t in topics if t["id"] == "ospf")
+    assert ospf["qa"] and ospf["key_points"] and ospf["commands"]

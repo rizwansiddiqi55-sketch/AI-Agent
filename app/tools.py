@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+from . import knowledge
 from .memory import LEVELS, SUBJECTS, Memory
 
 
@@ -86,6 +87,33 @@ TOOL_DEFINITIONS: list[dict] = [
         ),
     },
     {
+        "name": "search_knowledge",
+        "description": "Search the built-in learning library (notes, verified commands and interview "
+        "Q&A with model answers) for networking, security, SD-WAN, Python/automation, AI and "
+        "English. Use it to ground explanations and troubleshooting steps in accurate material.",
+        "input_schema": _obj(
+            {
+                "query": {"type": "string", "description": "Topic or question, e.g. 'OSPF ExStart'"},
+                "subject": {"type": "string", "enum": SUBJECTS},
+            },
+            ["query"],
+        ),
+    },
+    {
+        "name": "get_practice_questions",
+        "description": "Get practice or interview questions WITH model answers from the library for "
+        "a topic. Ask them one at a time; never reveal the model answer before Rizwan answers. "
+        "Use the model answer to grade and improve his answer.",
+        "input_schema": _obj(
+            {
+                "topic": {"type": "string", "description": "e.g. 'BGP', 'IPsec', 'RAG', 'interview'"},
+                "count": {"type": "integer", "minimum": 1, "maximum": 5},
+                "level": {"type": "string", "enum": ["Beginner", "Intermediate", "Advanced"]},
+            },
+            ["topic"],
+        ),
+    },
+    {
         "name": "get_english_corrections",
         "description": "Get recent English corrections to review recurring mistakes.",
         "input_schema": _obj({}, []),
@@ -105,6 +133,8 @@ TOOL_STATUS = {
     "get_notes": "Reading your notes…",
     "log_english_correction": "Logging English correction…",
     "get_english_corrections": "Reviewing English corrections…",
+    "search_knowledge": "Checking the study library…",
+    "get_practice_questions": "Picking practice questions…",
 }
 
 
@@ -135,12 +165,46 @@ def validate_input(name: str, data: Any) -> dict:
     for key, value in data.items():
         if key not in props:
             raise ToolInputError(f"Unexpected field: {key}")
+        if props[key].get("type") == "integer":
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ToolInputError(f"Field {key} must be an integer")
+            lo, hi = props[key].get("minimum"), props[key].get("maximum")
+            if (lo is not None and value < lo) or (hi is not None and value > hi):
+                raise ToolInputError(f"Field {key} must be between {lo} and {hi}")
+            continue
         if not isinstance(value, str):
             raise ToolInputError(f"Field {key} must be a string")
         allowed = props[key].get("enum")
         if allowed and value not in allowed:
             raise ToolInputError(f"Field {key} must be one of {allowed}")
     return data
+
+
+def _search_knowledge(query: str, subject: str | None = None) -> Any:
+    results = knowledge.search(query, subject, limit=3)
+    if not results:
+        return {"results": [], "note": "Nothing in the library for this; answer from general knowledge "
+                "and say so if unsure.", "topics": knowledge.list_topic_titles()}
+    trimmed = []
+    for r in results:
+        if r["type"] == "topic":
+            trimmed.append({"topic": r["topic"], "key_points": r["key_points"][:6],
+                            "commands": r["commands"][:4]})
+        else:
+            trimmed.append({"topic": r["topic"], "q": r["q"], "model_answer": r["a"]})
+    return {"results": trimmed}
+
+
+def _practice_questions(topic: str, count: int = 3, level: str | None = None) -> Any:
+    found = knowledge.practice_questions(topic, count, level)
+    if found is None:
+        return {"questions": [], "topics": knowledge.list_topic_titles()}
+    return {
+        "topic": found["topic"],
+        "instructions": "Ask one question at a time. Do not reveal model_answer until he has answered.",
+        "questions": [{"q": q["q"], "level": q["level"], "model_answer": q["a"]}
+                      for q in found["questions"]],
+    }
 
 
 def execute_tool(memory: Memory, name: str, data: Any) -> str:
@@ -168,6 +232,10 @@ def execute_tool(memory: Memory, name: str, data: Any) -> str:
         result = {"ok": True}
     elif name == "get_english_corrections":
         result = memory.get_english_corrections() or "No corrections logged yet."
+    elif name == "search_knowledge":
+        result = _search_knowledge(**args)
+    elif name == "get_practice_questions":
+        result = _practice_questions(**args)
     else:  # pragma: no cover - guarded by validate_input
         raise ToolInputError(f"Unknown tool: {name}")
     return json.dumps(result, ensure_ascii=False)
