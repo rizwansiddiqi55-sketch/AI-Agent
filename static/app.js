@@ -869,5 +869,11 @@ async function loadConfig() {
   tts.server = !!data.tts;
 }
 
+// Installable app: register the service worker (offline shell, home-screen install).
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+
 // Modes first so a passcode prompt appears once, then server features and the transcript.
-loadModes().then(loadConfig).then(loadHistory);
+loadModes().then(loadConfig).then(loadHistory)
+  .catch(() => setStatus(navigator.onLine ? "Could not reach the server. Pull down or reopen to retry." : "You're offline. Connect to the internet to talk to your tutor."));

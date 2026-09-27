@@ -167,3 +167,23 @@ def test_library_endpoint(memory):
     assert len(topics) >= 20
     ospf = next(t for t in topics if t["id"] == "ospf")
     assert ospf["qa"] and ospf["key_points"] and ospf["commands"]
+
+
+def test_pwa_files_are_public(memory, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setenv("APP_PASSCODE", "s3cret")
+    get_settings.cache_clear()
+    try:
+        client = make_client(memory, [])
+        m = client.get("/manifest.webmanifest")
+        assert m.status_code == 200 and m.headers["content-type"].startswith("application/manifest+json")
+        assert m.json()["display"] == "standalone"
+        sw = client.get("/sw.js")
+        assert sw.status_code == 200 and "javascript" in sw.headers["content-type"]
+        assert sw.headers["cache-control"] == "no-cache"
+        assert client.get("/favicon.ico").headers["content-type"] == "image/png"
+        page = client.get("/").text
+        assert 'rel="manifest"' in page and "apple-touch-icon" in page
+    finally:
+        get_settings.cache_clear()

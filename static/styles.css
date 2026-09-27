@@ -261,3 +261,14 @@ button { font: inherit; cursor: pointer; }
 .qa-actions button { font-size: .82rem; padding: 5px 10px; }
 .lib-topic-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .lib-topic-actions button { font-size: .82rem; padding: 5px 10px; }
+
+/* ---------- Installed app (home screen): keep content clear of the notch and home bar ---------- */
+.topbar { padding-top: calc(10px + env(safe-area-inset-top)); padding-left: calc(16px + env(safe-area-inset-left)); padding-right: calc(16px + env(safe-area-inset-right)); }
+.composer { padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+.call { padding-top: calc(12px + env(safe-area-inset-top)); }
+.panel { padding-top: calc(16px + env(safe-area-inset-top)); padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+@media (display-mode: standalone) {
+  html, body { overscroll-behavior: none; }
+  body { -webkit-user-select: none; user-select: none; }
+  input, textarea, .msg, .answer, .lib-inner { -webkit-user-select: text; user-select: text; }
+}

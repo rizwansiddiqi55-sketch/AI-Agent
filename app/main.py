@@ -102,6 +102,23 @@ async def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/manifest.webmanifest", include_in_schema=False)
+async def manifest():
+    return FileResponse(STATIC_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/sw.js", include_in_schema=False)
+async def service_worker():
+    # Served from the root so it can control the whole app; never cached so updates apply quickly.
+    return FileResponse(STATIC_DIR / "sw.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(STATIC_DIR / "icons" / "favicon-32.png", media_type="image/png")
+
+
 @app.get("/api/auth")
 async def auth():
     """Lets the UI check a passcode (the middleware does the actual check)."""

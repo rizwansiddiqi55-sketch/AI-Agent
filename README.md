@@ -77,6 +77,15 @@ The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `
 | `APP_PASSCODE` | – | If set, the API requires this passcode. Required on Vercel |
 | `MAX_HISTORY_MESSAGES` | `80` | After this many messages the chat starts fresh. Progress, notes, and lesson position are kept |
 
+## Install it as an app (iPhone / Android)
+
+The tutor is an installable web app (PWA): it gets its own robot icon, opens full screen without browser bars, and updates automatically.
+
+- **iPhone / iPad:** open the site in **Safari** → tap **Share** → **Add to Home Screen** → **Add**. Open it from the new "AI Tutor" icon and allow the microphone once.
+- **Android:** open the site in **Chrome** → menu **⋮** → **Install app** (or **Add to Home screen**).
+
+The installed app keeps its own storage, so it asks for the passcode once more the first time. A native App Store build would need a Mac with Xcode and an Apple Developer account (for example by wrapping this site with Capacitor).
+
 ## Using it
 
 - **Mic button**: tap, speak, and pause. Recording stops by itself after about 1.5 seconds of silence (or tap again), then the tutor replies by voice.
@@ -122,7 +131,7 @@ app/
   config.py    settings from .env
 prompts/master_system_prompt.md   the tutor's personality and teaching rules
 knowledge/     study library: topic notes and Q&A with model answers (JSON)
-static/        index.html, app.js, styles.css (voice UI)
+static/        index.html, app.js, styles.css (voice UI), manifest + sw.js + icons (installable app)
 tests/         pytest suite
 ```
 
