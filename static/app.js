@@ -347,29 +347,70 @@ const recorder = {
   audioCtx: null, stream: null, source: null, processor: null, chunks: [], timer: null,
   cancelled: false, discard: false, active: false, rms: 0,
 
-  ensureContext() {
+  startId: 0, failedStarts: 0,
+
+  // Call directly inside a tap: iOS only lets a page resume audio from a user gesture.
+  // After the tutor speaks, iOS puts the context into "suspended" or "interrupted".
+  ensureContext(fromTap = false) {
+    if (this.audioCtx && (this.audioCtx.state === "closed" || (fromTap && this.failedStarts > 0))) {
+      try { this.audioCtx.close(); } catch { /* ignore */ }
+      this.audioCtx = null;  // recreate inside this tap so it starts running
+      this.failedStarts = 0;
+    }
     this.audioCtx = this.audioCtx || new AudioCtx();
-    if (this.audioCtx.state === "suspended") this.audioCtx.resume().catch(() => {});
+    if (this.audioCtx.state !== "running") {
+      try { this.audioCtx.resume().catch(() => {}); } catch { /* ignore */ }
+    }
     return this.audioCtx;
   },
 
-  async start() {
-    const ctx = this.ensureContext();  // created/resumed while still inside the tap on iOS
+  // Wait (briefly) for the context to run. resume() can hang forever on iOS outside a tap.
+  waitRunning(ctx, ms = 1500) {
+    if (ctx.state === "running") return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const onChange = () => { if (ctx.state === "running") done(true); };
+      const done = (ok) => { clearTimeout(timer); ctx.removeEventListener("statechange", onChange); resolve(ok); };
+      const timer = setTimeout(() => done(ctx.state === "running"), ms);
+      ctx.addEventListener("statechange", onChange);
+      try { ctx.resume().catch(() => {}); } catch { /* ignore */ }
+    });
+  },
+
+  releaseStream(stream) {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+  },
+
+  async start(fromTap = false) {
+    const id = ++this.startId;
+    const ctx = this.ensureContext(fromTap);
+    this.releaseStream(this.stream);  // never leave an old mic stream open
+    let stream;
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
       });
     } catch (err) {
       setStatus(err.name === "NotAllowedError" ? "Microphone permission denied. Allow it in your browser settings." : `Mic error: ${err.message}`);
       return;
     }
-    if (ctx.state === "suspended") await ctx.resume().catch(() => {});
+    if (id !== this.startId) { this.releaseStream(stream); return; }  // superseded by a newer tap
+    const running = await this.waitRunning(ctx);
+    if (id !== this.startId) { this.releaseStream(stream); return; }
+    if (!running) {
+      // Typically an automatic (hands-free) restart right after the tutor spoke on iOS.
+      this.releaseStream(stream);
+      this.failedStarts++;
+      setStatus("Tap the robot to talk");
+      return;
+    }
+    this.failedStarts = 0;
+    this.stream = stream;
     this.chunks = [];
     this.cancelled = false;
     this.discard = false;
     this.active = true;
     this.rms = 0;
-    this.source = ctx.createMediaStreamSource(this.stream);
+    this.source = ctx.createMediaStreamSource(stream);
     this.processor = ctx.createScriptProcessor(4096, 1, 1);
     this.processor.onaudioprocess = (e) => {
       if (!this.active) return;
@@ -406,7 +447,8 @@ const recorder = {
     clearInterval(this.timer);
     try { this.source.disconnect(); this.processor.disconnect(); } catch { /* ignore */ }
     this.processor.onaudioprocess = null;
-    this.stream.getTracks().forEach((t) => t.stop());
+    this.releaseStream(this.stream);
+    this.stream = null;
     this.finish();
   },
 
@@ -480,12 +522,12 @@ if (micMode === "none") {
   $("micHint").hidden = false;
 }
 
-function startListening() {
+function startListening(fromTap = false) {
   if (listening || busy || micMode === "none") return;
   tts.cancel();
   textInput.value = "";
   if (micMode === "server") {
-    recorder.start();
+    recorder.start(fromTap);
   } else {
     recognition.lang = recogLang;
     try { recognition.start(); } catch { /* already started */ }
@@ -500,7 +542,7 @@ function stopListening() {
 micBtn.addEventListener("click", () => {
   unlockAudio();
   if (listening) stopListening();
-  else startListening();
+  else startListening(true);
 });
 
 document.querySelectorAll(".seg-btn").forEach((btn) => {
@@ -563,8 +605,8 @@ var call = {
   toggleTalk() {
     unlockAudio();
     if (listening) stopListening();
-    else if (tts.queue > 0) { tts.cancel(); startListening(); }
-    else if (!busy && !transcribing) startListening();
+    else if (tts.queue > 0) { tts.cancel(); startListening(true); }
+    else if (!busy && !transcribing) startListening(true);
   },
 
   start() {
@@ -586,8 +628,12 @@ var call = {
   end() {
     this.open = false;
     this.el.hidden = true;
-    if (listening) {
-      if (micMode === "server") { recorder.discard = true; recorder.stop(true); } else stopListening();
+    if (micMode === "server") {
+      recorder.startId++;  // cancel a start that is still waiting for the mic
+      if (listening) { recorder.discard = true; recorder.stop(true); }
+      recorder.releaseStream(recorder.stream);
+    } else if (listening) {
+      stopListening();
     }
     tts.cancel();
     setStatus("");
