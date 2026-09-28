@@ -65,7 +65,7 @@ The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `
 | `GROQ_MAX_TOKENS` | `2048` | Max reply length, including hidden reasoning |
 | `GROQ_STT_MODEL` | `whisper-large-v3` | Speech recognition model (`whisper-large-v3-turbo` is faster) |
 | `ELEVENLABS_API_KEY` | – | ElevenLabs key: natural Urdu voice (takes priority over Azure) |
-| `ELEVENLABS_VOICE_ID` | `JBFqnCBsd6RMkjVDRZzb` | Any voice ID from your ElevenLabs voice library (e.g. a Pakistani Urdu voice) |
+| `ELEVENLABS_VOICE_ID` | `JBFqnCBsd6RMkjVDRZzb` | Voice to use. On the **free plan** only ElevenLabs' premade (default) voices work through the API; Voice Library voices need a paid plan, and the app falls back to the default voice automatically |
 | `ELEVENLABS_MODEL` | `eleven_v3` | Must support Urdu; v3 does |
 | `ELEVENLABS_SCOPE` | `urdu` | `urdu` = only Urdu sentences (saves quota), `all` = every sentence |
 | `AZURE_SPEECH_KEY` | – | Azure Speech key: enables natural Urdu and English voices |

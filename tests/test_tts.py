@@ -94,3 +94,35 @@ def test_elevenlabs_errors(status, body, fragment, code):
     with pytest.raises(SpeechError) as exc:
         asyncio.run(tts.synthesize("hello"))
     assert fragment in str(exc.value) and exc.value.status == code
+
+
+def test_elevenlabs_falls_back_to_default_voice_on_free_plan():
+    from app.tts import ELEVENLABS_DEFAULT_VOICE
+
+    urls = []
+
+    def handler(request):
+        urls.append(request.url.path)
+        if "libraryvoice" in request.url.path:
+            return httpx.Response(402, json={"detail": {"status": "payment_required", "message":
+                "Free users cannot use library voices via the API. Please upgrade your subscription to use this voice."}})
+        return httpx.Response(200, content=b"ID3ok")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tts = ElevenLabsTTS("xi", "libraryvoice", "eleven_v3", client=client)
+    assert asyncio.run(tts.synthesize("سلام")) == b"ID3ok"
+    assert urls == ["/v1/text-to-speech/libraryvoice", f"/v1/text-to-speech/{ELEVENLABS_DEFAULT_VOICE}"]
+    # Remembered: the next sentence goes straight to the default voice
+    asyncio.run(tts.synthesize("شکریہ"))
+    assert urls[-1] == f"/v1/text-to-speech/{ELEVENLABS_DEFAULT_VOICE}" and len(urls) == 3
+
+
+def test_elevenlabs_default_voice_refused_raises():
+    from app.tts import ELEVENLABS_DEFAULT_VOICE
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(402, json={"detail": {"message": "Payment required"}})))
+    tts = ElevenLabsTTS("xi", ELEVENLABS_DEFAULT_VOICE, "eleven_v3", client=client)
+    with pytest.raises(SpeechError) as exc:
+        asyncio.run(tts.synthesize("سلام"))
+    assert "Payment required" in str(exc.value)

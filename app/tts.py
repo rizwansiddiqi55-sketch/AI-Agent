@@ -1,11 +1,13 @@
 """Server-side text-to-speech: ElevenLabs (Eleven v3, supports Urdu) or Azure Speech neural voices."""
 
+import logging
 import re
 from xml.sax.saxutils import escape
 
 import httpx
 
 MAX_TTS_CHARS = 1500
+log = logging.getLogger("tutor.tts")
 _URDU_SCRIPT = re.compile(r"[؀-ۿ]")
 _LATIN = re.compile(r"[A-Za-z]")
 
@@ -73,6 +75,11 @@ class AzureTTS:
         return res.content
 
 
+# "George": a premade (default) voice. Free ElevenLabs plans can use premade voices via the API,
+# but not voices added from the Voice Library.
+ELEVENLABS_DEFAULT_VOICE = "JBFqnCBsd6RMkjVDRZzb"
+
+
 class ElevenLabsTTS:
     """ElevenLabs text-to-speech. Urdu needs the Eleven v3 model (older models don't support Urdu)."""
 
@@ -88,7 +95,19 @@ class ElevenLabsTTS:
         if not text:
             raise SpeechError("No text to speak.", 400)
         text = text[:MAX_TTS_CHARS]
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}"
+        try:
+            return await self._synthesize(text, self.voice_id)
+        except _VoiceNotAllowed as exc:
+            if self.voice_id == ELEVENLABS_DEFAULT_VOICE:
+                raise SpeechError(f"ElevenLabs: {exc}") from exc
+            # Free plan + Voice Library voice: switch to the premade default voice for good.
+            log.warning("ElevenLabs voice %s not allowed on this plan (%s); using default voice",
+                        self.voice_id, exc)
+            self.voice_id = ELEVENLABS_DEFAULT_VOICE
+            return await self._synthesize(text, self.voice_id)
+
+    async def _synthesize(self, text: str, voice_id: str) -> bytes:
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
         try:
             res = await self.client.post(
                 url,
@@ -109,7 +128,13 @@ class ElevenLabsTTS:
         if res.status_code == 429:
             raise SpeechError("ElevenLabs rate limit reached.", 429)
         message = detail.get("message") or res.text[:200]
+        if res.status_code == 402 or (res.status_code in (400, 404) and "voice" in message.lower()):
+            raise _VoiceNotAllowed(message)
         raise SpeechError(f"ElevenLabs error {res.status_code}: {message}")
+
+
+class _VoiceNotAllowed(Exception):
+    """The configured voice can't be used (e.g. a Voice Library voice on the free plan)."""
 
 
 def _elevenlabs_detail(res: httpx.Response) -> dict:
