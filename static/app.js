@@ -134,23 +134,25 @@ const tts = {
     if (!clean) return;
     // One ordered queue: server voice (ElevenLabs/Azure) for Urdu or all sentences, device voice otherwise.
     const useServer = this.server && (this.scope === "all" || URDU_RE.test(clean));
-    const item = { text: clean, server: useServer };
-    if (useServer) {
-      // Start fetching now so the audio is ready when this sentence's turn comes.
-      item.promise = api("/api/tts", {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: clean }),
-      }).then(async (res) => {
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.detail || `HTTP ${res.status}`);
-        }
-        return res.blob();
-      });
-      item.promise.catch(() => {});  // handled in playNext
-    }
-    this.items.push(item);
+    this.items.push({ text: clean, server: useServer, promise: null });
     this.started();
     if (!this.playing) this.playNext(this.gen);
+  },
+  // Fetch lazily: only the playing sentence and the next one (free ElevenLabs allows ~2 at once).
+  fetchAudio(item) {
+    if (!item || !item.server || item.promise) return;
+    item.promise = api("/api/tts", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: item.text }),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const err = new Error(data.detail || `HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.blob();
+    });
+    item.promise.catch(() => {});  // handled in playNext
   },
   deviceSay(clean) {
     return new Promise((resolve) => {
@@ -183,14 +185,19 @@ const tts = {
     const item = this.items.shift();
     if (!item) { this.playing = false; return; }
     this.playing = true;
+    if (item.server && this.server) this.fetchAudio(item);
+    if (this.server) this.fetchAudio(this.items[0]);  // prefetch the next sentence only
     try {
       if (item.server && this.server) await this.playServer(item, gen);
       else await this.deviceSay(item.text);
     } catch (err) {
       if (gen !== this.gen) return;
-      // Server voice failed (quota, key, network): use the device voice for the rest of this session.
-      this.server = false;
-      setStatus(`Natural voice unavailable (${err.message}). Using the device voice.`);
+      if (err.status !== 429) {
+        // Quota used up, bad key, network...: use the device voice for the rest of this session.
+        this.server = false;
+        setStatus(`Natural voice unavailable (${err.message}). Using the device voice.`);
+      }
+      // Busy (429): just this sentence falls back; keep trying the natural voice for the next ones.
       await this.deviceSay(item.text);
     }
     if (gen !== this.gen) return;

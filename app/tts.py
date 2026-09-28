@@ -1,5 +1,6 @@
 """Server-side text-to-speech: ElevenLabs (Eleven v3, supports Urdu) or Azure Speech neural voices."""
 
+import asyncio
 import logging
 import re
 from xml.sax.saxutils import escape
@@ -83,18 +84,38 @@ ELEVENLABS_DEFAULT_VOICE = "JBFqnCBsd6RMkjVDRZzb"
 class ElevenLabsTTS:
     """ElevenLabs text-to-speech. Urdu needs the Eleven v3 model (older models don't support Urdu)."""
 
+    # Free plan allows only a few simultaneous requests; queue the rest and retry when busy.
+    MAX_CONCURRENT = 2
+    BUSY_RETRIES = 3
+
     def __init__(self, api_key: str, voice_id: str, model: str,
-                 client: httpx.AsyncClient | None = None):
+                 client: httpx.AsyncClient | None = None, retry_delay: float = 0.7):
         self.api_key = api_key
         self.voice_id = voice_id
         self.model = model
         self.client = client or httpx.AsyncClient(timeout=30)
+        self.retry_delay = retry_delay
+        self._slots = asyncio.Semaphore(self.MAX_CONCURRENT)
 
     async def synthesize(self, text: str) -> bytes:
         text = text.strip()
         if not text:
             raise SpeechError("No text to speak.", 400)
         text = text[:MAX_TTS_CHARS]
+        async with self._slots:
+            return await self._synthesize_with_retries(text)
+
+    async def _synthesize_with_retries(self, text: str) -> bytes:
+        for attempt in range(self.BUSY_RETRIES + 1):
+            try:
+                return await self._synthesize_any_voice(text)
+            except _Busy:
+                if attempt == self.BUSY_RETRIES:
+                    raise SpeechError("ElevenLabs is busy (too many requests at once). Try again.", 429)
+                await asyncio.sleep(self.retry_delay * (2 ** attempt))
+        raise AssertionError("unreachable")
+
+    async def _synthesize_any_voice(self, text: str) -> bytes:
         try:
             return await self._synthesize(text, self.voice_id)
         except _VoiceNotAllowed as exc:
@@ -126,11 +147,15 @@ class ElevenLabsTTS:
         if res.status_code == 401:
             raise SpeechError("ElevenLabs API key is invalid (ELEVENLABS_API_KEY).")
         if res.status_code == 429:
-            raise SpeechError("ElevenLabs rate limit reached.", 429)
+            raise _Busy(status or "rate_limited")
         message = detail.get("message") or res.text[:200]
         if res.status_code == 402 or (res.status_code in (400, 404) and "voice" in message.lower()):
             raise _VoiceNotAllowed(message)
         raise SpeechError(f"ElevenLabs error {res.status_code}: {message}")
+
+
+class _Busy(Exception):
+    """Too many concurrent requests / system busy: worth a short retry."""
 
 
 class _VoiceNotAllowed(Exception):

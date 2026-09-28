@@ -64,7 +64,7 @@ from app.tts import ElevenLabsTTS
 
 def make_eleven(handler):
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return ElevenLabsTTS("xi-key", "voice123", "eleven_v3", client=client)
+    return ElevenLabsTTS("xi-key", "voice123", "eleven_v3", client=client, retry_delay=0)
 
 
 def test_elevenlabs_request():
@@ -86,7 +86,7 @@ def test_elevenlabs_request():
 @pytest.mark.parametrize("status,body,fragment,code", [
     (401, {"detail": {"status": "quota_exceeded", "message": "This request exceeds your quota"}}, "quota", 429),
     (401, {"detail": {"status": "invalid_api_key", "message": "Invalid API key"}}, "invalid", 502),
-    (429, {"detail": {"status": "too_many_concurrent_requests"}}, "rate limit", 429),
+    (429, {"detail": {"status": "too_many_concurrent_requests"}}, "busy", 429),
     (400, {"detail": {"status": "invalid_model", "message": "Model not found"}}, "Model not found", 502),
 ])
 def test_elevenlabs_errors(status, body, fragment, code):
@@ -109,7 +109,7 @@ def test_elevenlabs_falls_back_to_default_voice_on_free_plan():
         return httpx.Response(200, content=b"ID3ok")
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    tts = ElevenLabsTTS("xi", "libraryvoice", "eleven_v3", client=client)
+    tts = ElevenLabsTTS("xi", "libraryvoice", "eleven_v3", client=client, retry_delay=0)
     assert asyncio.run(tts.synthesize("سلام")) == b"ID3ok"
     assert urls == ["/v1/text-to-speech/libraryvoice", f"/v1/text-to-speech/{ELEVENLABS_DEFAULT_VOICE}"]
     # Remembered: the next sentence goes straight to the default voice
@@ -122,7 +122,40 @@ def test_elevenlabs_default_voice_refused_raises():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(
         lambda r: httpx.Response(402, json={"detail": {"message": "Payment required"}})))
-    tts = ElevenLabsTTS("xi", ELEVENLABS_DEFAULT_VOICE, "eleven_v3", client=client)
+    tts = ElevenLabsTTS("xi", ELEVENLABS_DEFAULT_VOICE, "eleven_v3", client=client, retry_delay=0)
     with pytest.raises(SpeechError) as exc:
         asyncio.run(tts.synthesize("سلام"))
     assert "Payment required" in str(exc.value)
+
+
+def test_elevenlabs_limits_concurrency_to_two():
+    active = {"now": 0, "max": 0}
+
+    async def handler(request):
+        active["now"] += 1
+        active["max"] = max(active["max"], active["now"])
+        await asyncio.sleep(0.02)
+        active["now"] -= 1
+        return httpx.Response(200, content=b"ID3")
+
+    async def run_many():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        tts = ElevenLabsTTS("xi", "v", "eleven_v3", client=client, retry_delay=0)
+        return await asyncio.gather(*(tts.synthesize(f"جملہ {i}") for i in range(8)))
+
+    results = asyncio.run(run_many())
+    assert len(results) == 8 and active["max"] == 2
+
+
+def test_elevenlabs_busy_is_retried():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) < 3:
+            return httpx.Response(429, json={"detail": {"status": "too_many_concurrent_requests"}})
+        return httpx.Response(200, content=b"ID3")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tts = ElevenLabsTTS("xi", "v", "eleven_v3", client=client, retry_delay=0)
+    assert asyncio.run(tts.synthesize("سلام")) == b"ID3" and len(calls) == 3
