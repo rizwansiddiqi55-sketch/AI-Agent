@@ -187,3 +187,26 @@ def test_pwa_files_are_public(memory, monkeypatch):
         assert 'rel="manifest"' in page and "apple-touch-icon" in page
     finally:
         get_settings.cache_clear()
+
+
+def test_elevenlabs_preferred_and_scope(memory, monkeypatch):
+    import app.main as main
+    from app.config import get_settings
+    from app.tts import ElevenLabsTTS
+
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "xi")
+    monkeypatch.setenv("AZURE_SPEECH_KEY", "k")
+    monkeypatch.setenv("AZURE_SPEECH_REGION", "eastus")
+    get_settings.cache_clear()
+    monkeypatch.setattr(main, "_tts", None)
+    try:
+        client = make_client(memory, [])
+        cfg = client.get("/api/config").json()
+        assert cfg["tts"] is True and cfg["tts_scope"] == "urdu"
+        assert isinstance(main._tts, ElevenLabsTTS) and main._tts.model == "eleven_v3"
+        monkeypatch.setenv("ELEVENLABS_SCOPE", "all")
+        get_settings.cache_clear()
+        assert client.get("/api/config").json()["tts_scope"] == "all"
+    finally:
+        get_settings.cache_clear()
+        monkeypatch.setattr(main, "_tts", None)

@@ -1,4 +1,4 @@
-"""Server-side text-to-speech with Azure Speech (native Pakistani Urdu neural voices)."""
+"""Server-side text-to-speech: ElevenLabs (Eleven v3, supports Urdu) or Azure Speech neural voices."""
 
 import re
 from xml.sax.saxutils import escape
@@ -71,3 +71,55 @@ class AzureTTS:
         if res.status_code != 200:
             raise SpeechError(f"Azure Speech error {res.status_code}: {res.text[:200]}")
         return res.content
+
+
+class ElevenLabsTTS:
+    """ElevenLabs text-to-speech. Urdu needs the Eleven v3 model (older models don't support Urdu)."""
+
+    def __init__(self, api_key: str, voice_id: str, model: str,
+                 client: httpx.AsyncClient | None = None):
+        self.api_key = api_key
+        self.voice_id = voice_id
+        self.model = model
+        self.client = client or httpx.AsyncClient(timeout=30)
+
+    async def synthesize(self, text: str) -> bytes:
+        text = text.strip()
+        if not text:
+            raise SpeechError("No text to speak.", 400)
+        text = text[:MAX_TTS_CHARS]
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}"
+        try:
+            res = await self.client.post(
+                url,
+                params={"output_format": "mp3_44100_64"},
+                json={"text": text, "model_id": self.model},
+                headers={"xi-api-key": self.api_key, "Accept": "audio/mpeg"},
+            )
+        except httpx.HTTPError as exc:
+            raise SpeechError(f"Could not reach ElevenLabs: {exc.__class__.__name__}") from exc
+        if res.status_code == 200:
+            return res.content
+        detail = _elevenlabs_detail(res)
+        status = detail.get("status", "")
+        if status == "quota_exceeded" or "quota" in status:
+            raise SpeechError("ElevenLabs free monthly character quota is used up.", 429)
+        if res.status_code == 401:
+            raise SpeechError("ElevenLabs API key is invalid (ELEVENLABS_API_KEY).")
+        if res.status_code == 429:
+            raise SpeechError("ElevenLabs rate limit reached.", 429)
+        message = detail.get("message") or res.text[:200]
+        raise SpeechError(f"ElevenLabs error {res.status_code}: {message}")
+
+
+def _elevenlabs_detail(res: httpx.Response) -> dict:
+    try:
+        body = res.json()
+    except ValueError:
+        return {}
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict):
+        return detail
+    if isinstance(detail, str):
+        return {"message": detail}
+    return {}

@@ -32,6 +32,17 @@ class Settings(BaseSettings):
     # Whisper model for server-side speech recognition (needs GROQ_API_KEY, any LLM provider)
     groq_stt_model: str = "whisper-large-v3"
 
+    # ElevenLabs text-to-speech (used instead of Azure when a key is set).
+    elevenlabs_api_key: str | None = None
+    # Default: "George", a premade multilingual voice available in every account. Replace with
+    # any voice ID from your ElevenLabs voice library (e.g. a Pakistani Urdu voice).
+    elevenlabs_voice_id: str = "JBFqnCBsd6RMkjVDRZzb"
+    # Eleven v3 is required for Urdu.
+    elevenlabs_model: str = "eleven_v3"
+    # "urdu": only Urdu sentences use ElevenLabs (saves the free quota; English uses the device
+    # voice). "all": every sentence uses ElevenLabs.
+    elevenlabs_scope: str = "urdu"
+
     # Azure Speech text-to-speech (natural Urdu voice). Both key and region are needed.
     azure_speech_key: str | None = None
     azure_speech_region: str | None = None

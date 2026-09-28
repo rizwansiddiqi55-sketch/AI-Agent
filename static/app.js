@@ -109,7 +109,8 @@ function silentWavUrl() {
 const tts = {
   voices: [],
   queue: 0,          // sentences waiting or playing (queue > 0 means "speaking")
-  server: false,     // Azure voice available (set from /api/config)
+  server: false,     // server voice available (set from /api/config)
+  scope: "all",      // "urdu": only Urdu sentences use the server voice
   items: [],
   playing: false,
   gen: 0,            // bumped on cancel so stale playback is ignored
@@ -131,39 +132,38 @@ const tts = {
   speak(text) {
     const clean = cleanForSpeech(text);
     if (!clean) return;
-    if (this.server) this.serverSpeak(clean);
-    else this.deviceSpeak(clean);
-  },
-  deviceSpeak(clean) {
-    if (!window.speechSynthesis) return;
-    const u = new SpeechSynthesisUtterance(clean);
-    const voice = this.pickVoice(clean);
-    if (voice) { u.voice = voice; u.lang = voice.lang; }
-    u.rate = 1.0;
-    this.started();
-    u.onend = u.onerror = () => this.finished();
-    speechSynthesis.speak(u);
-  },
-  serverSpeak(clean) {
-    // Start fetching right away so the next sentence is ready when the current one ends.
-    const promise = api("/api/tts", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: clean }),
-    }).then(async (res) => {
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || `HTTP ${res.status}`);
-      }
-      return res.blob();
-    });
-    promise.catch(() => {});  // handled in playNext
-    this.items.push({ text: clean, promise });
+    // One ordered queue: server voice (ElevenLabs/Azure) for Urdu or all sentences, device voice otherwise.
+    const useServer = this.server && (this.scope === "all" || URDU_RE.test(clean));
+    const item = { text: clean, server: useServer };
+    if (useServer) {
+      // Start fetching now so the audio is ready when this sentence's turn comes.
+      item.promise = api("/api/tts", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: clean }),
+      }).then(async (res) => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || `HTTP ${res.status}`);
+        }
+        return res.blob();
+      });
+      item.promise.catch(() => {});  // handled in playNext
+    }
+    this.items.push(item);
     this.started();
     if (!this.playing) this.playNext(this.gen);
   },
-  async playNext(gen) {
-    const item = this.items.shift();
-    if (!item) { this.playing = false; return; }
-    this.playing = true;
+  deviceSay(clean) {
+    return new Promise((resolve) => {
+      if (!window.speechSynthesis) return resolve();
+      const u = new SpeechSynthesisUtterance(clean);
+      const voice = this.pickVoice(clean);
+      if (voice) { u.voice = voice; u.lang = voice.lang; }
+      u.rate = 1.0;
+      u.onend = u.onerror = () => resolve();
+      speechSynthesis.speak(u);
+    });
+  },
+  async playServer(item, gen) {
     let url = null;
     try {
       const blob = await item.promise;
@@ -175,20 +175,23 @@ const tts = {
         this.audio.onerror = () => reject(new Error("audio playback failed"));
         this.audio.play().catch(reject);
       });
-    } catch (err) {
-      if (gen !== this.gen) return;
-      // Fall back to the device voice for this and the remaining sentences.
-      this.server = false;
-      setStatus(`Natural voice unavailable (${err.message}). Using the device voice.`);
-      const rest = [item, ...this.items];
-      this.items = [];
-      this.playing = false;
-      this.queue = Math.max(0, this.queue - rest.length);
-      rest.forEach((i) => this.deviceSpeak(i.text));
-      if (this.queue === 0) this.onIdle();
-      return;
     } finally {
       if (url) URL.revokeObjectURL(url);
+    }
+  },
+  async playNext(gen) {
+    const item = this.items.shift();
+    if (!item) { this.playing = false; return; }
+    this.playing = true;
+    try {
+      if (item.server && this.server) await this.playServer(item, gen);
+      else await this.deviceSay(item.text);
+    } catch (err) {
+      if (gen !== this.gen) return;
+      // Server voice failed (quota, key, network): use the device voice for the rest of this session.
+      this.server = false;
+      setStatus(`Natural voice unavailable (${err.message}). Using the device voice.`);
+      await this.deviceSay(item.text);
     }
     if (gen !== this.gen) return;
     this.finished();
@@ -913,6 +916,7 @@ async function loadConfig() {
   if (!res.ok) return;
   const data = await res.json();
   tts.server = !!data.tts;
+  tts.scope = data.tts_scope || "all";
 }
 
 // Installable app: register the service worker (offline shell, home-screen install).

@@ -23,7 +23,7 @@ from .config import ON_VERCEL, get_settings
 from .memory import LEVELS, SUBJECTS, Memory
 from .modes import MODES
 from .stt import TranscriptionError, transcribe
-from .tts import AzureTTS, SpeechError
+from .tts import AzureTTS, ElevenLabsTTS, SpeechError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -165,25 +165,39 @@ async def transcribe_audio(request: Request, lang: str | None = None):
     return {"text": text}
 
 
-_tts: AzureTTS | None = None
+_tts: Any = None
 
 
-def get_tts() -> AzureTTS | None:
+def get_tts() -> Any:
+    """ElevenLabs if configured, otherwise Azure, otherwise None (the page uses device voices)."""
     global _tts
     settings = get_settings()
-    if not (settings.azure_speech_key and settings.azure_speech_region):
-        return None
-    if _tts is None:
+    if _tts is not None:
+        return _tts
+    if settings.elevenlabs_api_key:
+        _tts = ElevenLabsTTS(settings.elevenlabs_api_key, settings.elevenlabs_voice_id,
+                             settings.elevenlabs_model)
+    elif settings.azure_speech_key and settings.azure_speech_region:
         _tts = AzureTTS(settings.azure_speech_key, settings.azure_speech_region,
                         settings.azure_urdu_voice, settings.azure_english_voice,
                         settings.azure_speech_rate)
     return _tts
 
 
+def tts_scope() -> str:
+    """Which sentences the page should send to the server voice: 'urdu' or 'all'."""
+    settings = get_settings()
+    if settings.elevenlabs_api_key:
+        return "urdu" if settings.elevenlabs_scope.lower() != "all" else "all"
+    return "all"
+
+
 @app.get("/api/config")
 async def config():
     """Which server-side speech features are available, so the page can pick the best path."""
-    return {"tts": get_tts() is not None, "stt": bool(get_settings().groq_api_key)}
+    tts = get_tts()
+    return {"tts": tts is not None, "tts_scope": tts_scope() if tts else None,
+            "stt": bool(get_settings().groq_api_key)}
 
 
 @app.post("/api/tts")
@@ -191,7 +205,7 @@ async def speak(req: SpeakRequest):
     """Text-to-speech with Azure (Urdu or English voice chosen from the text). Returns MP3."""
     tts = get_tts()
     if tts is None:
-        return JSONResponse({"detail": "Server voice needs AZURE_SPEECH_KEY and AZURE_SPEECH_REGION."},
+        return JSONResponse({"detail": "Server voice needs ELEVENLABS_API_KEY (or Azure Speech settings)."},
                             status_code=501)
     try:
         audio = await tts.synthesize(req.text)

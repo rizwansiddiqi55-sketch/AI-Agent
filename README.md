@@ -17,7 +17,8 @@ Browser mic ── recorded audio ──► /api/transcribe (Groq Whisper, en / 
 ```
 
 - **Speech-to-text uses Groq Whisper** (`whisper-large-v3`). The page records your voice, stops automatically when you pause, and the server transcribes it. This works in every modern browser, including **iPhone Safari**, and handles Urdu much better than browser dictation. If `GROQ_API_KEY` isn't set, the page falls back to the browser's built-in speech recognition (Chrome/Edge).
-- **Text-to-speech uses Azure Speech neural voices** when `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION` are set. Urdu sentences are spoken by a native Pakistani Urdu voice (`ur-PK-AsadNeural` by default), and English sentences by an English neural voice. The tutor then writes Urdu in Urdu script so it is pronounced correctly. Without Azure, the device's built-in voices are used; phones often have no Urdu voice, so the tutor falls back to Roman Urdu. Code blocks and CLI commands appear on screen but are not read aloud.
+- **Urdu voice with ElevenLabs (free plan works):** set `ELEVENLABS_API_KEY` and Urdu sentences are spoken with ElevenLabs' **Eleven v3** model (the ElevenLabs model that supports Urdu). By default only Urdu sentences use ElevenLabs and English uses the device voice, which makes the free ~10,000 characters/month last much longer (`ELEVENLABS_SCOPE=all` to use it for everything). If the quota runs out, the app switches to the device voice automatically.
+- **Text-to-speech can also use Azure Speech neural voices** when `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION` are set. Urdu sentences are spoken by a native Pakistani Urdu voice (`ur-PK-AsadNeural` by default), and English sentences by an English neural voice. The tutor then writes Urdu in Urdu script so it is pronounced correctly. Without Azure, the device's built-in voices are used; phones often have no Urdu voice, so the tutor falls back to Roman Urdu. Code blocks and CLI commands appear on screen but are not read aloud.
 - **Groq** powers the tutor by default, through the official `groq` Python SDK. The default model is `openai/gpt-oss-120b`, which is fast, good at tool calling, and multilingual. Replies stream and the model's reasoning is hidden. You can change the model with `GROQ_MODEL`.
 - **Groq free plan:** requests are kept small so they fit Groq's free-tier limits (for `gpt-oss-120b`, 8,000 tokens per minute). Groq uses a condensed prompt ([`prompts/compact_system_prompt.md`](prompts/compact_system_prompt.md)) and only the recent part of the conversation; lesson, progress and notes stay available through the memory tools. If Groq asks the app to wait a few seconds, it shows "waiting" and retries on its own. For heavier daily use, Groq's pay-as-you-go Dev tier removes these limits.
 - **Claude** is also supported. Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` to use it instead. It uses the official `anthropic` SDK with adaptive thinking and prompt caching. Each provider keeps its own conversation history. Progress, notes, and lesson position are shared.
@@ -63,6 +64,10 @@ The repo is ready to deploy on Vercel as-is. Vercel detects the FastAPI app at `
 | `GROQ_HISTORY_CHARS` | `6000` | How much recent conversation is sent per request (~4 characters per token) |
 | `GROQ_MAX_TOKENS` | `2048` | Max reply length, including hidden reasoning |
 | `GROQ_STT_MODEL` | `whisper-large-v3` | Speech recognition model (`whisper-large-v3-turbo` is faster) |
+| `ELEVENLABS_API_KEY` | – | ElevenLabs key: natural Urdu voice (takes priority over Azure) |
+| `ELEVENLABS_VOICE_ID` | `JBFqnCBsd6RMkjVDRZzb` | Any voice ID from your ElevenLabs voice library (e.g. a Pakistani Urdu voice) |
+| `ELEVENLABS_MODEL` | `eleven_v3` | Must support Urdu; v3 does |
+| `ELEVENLABS_SCOPE` | `urdu` | `urdu` = only Urdu sentences (saves quota), `all` = every sentence |
 | `AZURE_SPEECH_KEY` | – | Azure Speech key: enables natural Urdu and English voices |
 | `AZURE_SPEECH_REGION` | – | Azure Speech region, e.g. `eastus` |
 | `AZURE_URDU_VOICE` | `ur-PK-AsadNeural` | Urdu voice (`ur-PK-UzmaNeural` for a female voice) |
@@ -124,7 +129,7 @@ app/
   groq_agent.py  Groq streaming + tool-calling loop (default provider)
   agent.py     Claude streaming + tool loop, prompt caching, refusal handling
   stt.py       speech-to-text with Groq Whisper
-  tts.py       text-to-speech with Azure neural voices (Urdu + English)
+  tts.py       text-to-speech with ElevenLabs (Eleven v3) or Azure neural voices
   tools.py     memory tool schemas, validation, execution
   memory.py    SQLite / Postgres storage (history, progress, notes, lesson, corrections, profile)
   modes.py     quick learning-mode commands
