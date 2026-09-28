@@ -159,3 +159,15 @@ def test_elevenlabs_busy_is_retried():
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     tts = ElevenLabsTTS("xi", "v", "eleven_v3", client=client, retry_delay=0)
     assert asyncio.run(tts.synthesize("سلام")) == b"ID3" and len(calls) == 3
+
+
+def test_elevenlabs_usage():
+    def handler(request):
+        assert request.url.path == "/v1/user/subscription"
+        return httpx.Response(200, json={"character_count": 2600, "character_limit": 10000,
+                                         "next_character_count_reset_unix": 1790000000})
+
+    tts = make_eleven(handler)
+    assert asyncio.run(tts.usage()) == {"used": 2600, "limit": 10000, "left": 7400, "resets_at": 1790000000}
+    denied = make_eleven(lambda r: httpx.Response(401, json={"detail": {"status": "missing_permissions"}}))
+    assert asyncio.run(denied.usage()) is None

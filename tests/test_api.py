@@ -210,3 +210,34 @@ def test_elevenlabs_preferred_and_scope(memory, monkeypatch):
     finally:
         get_settings.cache_clear()
         monkeypatch.setattr(main, "_tts", None)
+
+
+def test_tts_usage_and_budget_config(memory, monkeypatch):
+    import app.main as main
+    from app.config import get_settings
+
+    class FakeTTS:
+        async def synthesize(self, text):
+            return b""
+
+        async def usage(self):
+            return {"used": 1, "limit": 10, "left": 9, "resets_at": None}
+
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "xi")
+    monkeypatch.setenv("ELEVENLABS_REPLY_CHAR_BUDGET", "200")
+    get_settings.cache_clear()
+    monkeypatch.setattr(main, "_tts", FakeTTS())
+    try:
+        client = make_client(memory, [])
+        assert client.get("/api/config").json()["tts_reply_budget"] == 200
+        assert client.get("/api/tts/usage").json() == {"usage": {"used": 1, "limit": 10, "left": 9, "resets_at": None}}
+    finally:
+        get_settings.cache_clear()
+        monkeypatch.setattr(main, "_tts", None)
+
+
+def test_context_asks_for_short_urdu_when_hd_voice(memory):
+    from app.agent import build_context_block
+
+    assert "about 2-3 short sentences" in build_context_block(memory, None, urdu_voice=True)
+    assert "Roman Urdu" in build_context_block(memory, None, urdu_voice=False)

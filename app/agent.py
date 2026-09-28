@@ -78,7 +78,10 @@ def build_context_block(
         (
             "A natural Urdu voice is available: write any Urdu in Urdu script (not Roman Urdu), "
             "even if Rizwan types Roman Urdu, so it is pronounced correctly. Keep technical terms "
-            "and commands in English letters."
+            "and commands in English letters. The Urdu voice has a small credit budget: keep the "
+            "spoken Urdu part of each reply to about 2-3 short sentences (under ~300 characters), "
+            "then ask a question; put any longer lists, steps or details inside a fenced code block "
+            "(shown on screen, not spoken)."
             if urdu_voice
             else "No Urdu voice on this device: write any Urdu in Roman Urdu so it can be spoken."
         ),

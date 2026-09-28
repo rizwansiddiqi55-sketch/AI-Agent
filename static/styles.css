@@ -272,3 +272,11 @@ button { font: inherit; cursor: pointer; }
   body { -webkit-user-select: none; user-select: none; }
   input, textarea, .msg, .answer, .lib-inner { -webkit-user-select: text; user-select: text; }
 }
+
+/* ---------- HD voice (ElevenLabs) controls ---------- */
+.toggles { display: flex; gap: 16px; flex-wrap: wrap; max-width: 860px; margin: 0 auto 6px; }
+.toggles .handsfree { margin: 0; }
+.call-top { gap: 8px; }
+.call-top > div { flex: 1; }
+.hd-btn { font-size: .82rem; padding: 6px 10px; white-space: nowrap; }
+.hd-btn[aria-pressed="false"] { opacity: .6; }

@@ -49,9 +49,14 @@
   <div id="status" class="status" hidden></div>
 
   <footer class="composer">
-    <label class="handsfree" title="Start listening automatically after the tutor finishes speaking">
-      <input type="checkbox" id="handsFree"> Hands-free
-    </label>
+    <div class="toggles">
+      <label class="handsfree" title="Start listening automatically after the tutor finishes speaking">
+        <input type="checkbox" id="handsFree"> Hands-free
+      </label>
+      <label class="handsfree" id="hdLabel" hidden title="Natural Urdu voice (uses ElevenLabs credits)">
+        <input type="checkbox" id="hdVoice"> HD Urdu voice <span class="muted" id="hdUsageMain"></span>
+      </label>
+    </div>
     <form id="form" class="input-row">
       <input id="textInput" type="text" autocomplete="off" placeholder="Type or tap the mic…" aria-label="Message">
       <button type="button" id="stopBtn" class="icon ghost" title="Stop speaking" aria-label="Stop speaking" hidden>■</button>
@@ -67,7 +72,9 @@
       <div>
         <h2>One-to-one</h2>
         <p class="sub" id="callLang">English</p>
+        <p class="sub" id="hdUsageCall" hidden></p>
       </div>
+      <button type="button" id="hdCallBtn" class="ghost hd-btn" hidden title="Natural Urdu voice (uses ElevenLabs credits)">HD voice: On</button>
       <button type="button" id="callEnd" class="end-btn">End</button>
     </header>
 

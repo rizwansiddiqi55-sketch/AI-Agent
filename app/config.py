@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     # "urdu": only Urdu sentences use ElevenLabs (saves the free quota; English uses the device
     # voice). "all": every sentence uses ElevenLabs.
     elevenlabs_scope: str = "urdu"
+    # Max characters of one reply sent to ElevenLabs; the rest stays on screen (saves credits).
+    elevenlabs_reply_char_budget: int = 350
 
     # Azure Speech text-to-speech (natural Urdu voice). Both key and region are needed.
     azure_speech_key: str | None = None

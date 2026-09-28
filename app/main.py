@@ -196,8 +196,18 @@ def tts_scope() -> str:
 async def config():
     """Which server-side speech features are available, so the page can pick the best path."""
     tts = get_tts()
+    settings = get_settings()
+    budget = settings.elevenlabs_reply_char_budget if settings.elevenlabs_api_key else None
     return {"tts": tts is not None, "tts_scope": tts_scope() if tts else None,
-            "stt": bool(get_settings().groq_api_key)}
+            "tts_reply_budget": budget, "stt": bool(settings.groq_api_key)}
+
+
+@app.get("/api/tts/usage")
+async def tts_usage():
+    """Remaining ElevenLabs characters this month, if the key may read it."""
+    tts = get_tts()
+    usage = await tts.usage() if tts is not None and hasattr(tts, "usage") else None
+    return {"usage": usage}
 
 
 @app.post("/api/tts")

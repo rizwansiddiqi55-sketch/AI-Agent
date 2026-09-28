@@ -127,6 +127,22 @@ class ElevenLabsTTS:
             self.voice_id = ELEVENLABS_DEFAULT_VOICE
             return await self._synthesize(text, self.voice_id)
 
+    async def usage(self) -> dict | None:
+        """Characters used/left this month (needs the key's 'User: read' permission)."""
+        try:
+            res = await self.client.get("https://api.elevenlabs.io/v1/user/subscription",
+                                        headers={"xi-api-key": self.api_key})
+        except httpx.HTTPError:
+            return None
+        if res.status_code != 200:
+            return None
+        data = res.json()
+        used, limit = data.get("character_count"), data.get("character_limit")
+        if not isinstance(used, int) or not isinstance(limit, int):
+            return None
+        return {"used": used, "limit": limit, "left": max(0, limit - used),
+                "resets_at": data.get("next_character_count_reset_unix")}
+
     async def _synthesize(self, text: str, voice_id: str) -> bytes:
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
         try:

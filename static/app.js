@@ -111,6 +111,11 @@ const tts = {
   queue: 0,          // sentences waiting or playing (queue > 0 means "speaking")
   server: false,     // server voice available (set from /api/config)
   scope: "all",      // "urdu": only Urdu sentences use the server voice
+  hdEnabled: storageGet("tutor.hd") !== "0",  // user switch to save ElevenLabs credits
+  budget: null,      // max server-voice characters per reply (null = unlimited)
+  replyChars: 0,
+  skipped: false,
+  cache: new Map(),  // text -> audio blob promise, so repeated sentences cost nothing
   items: [],
   playing: false,
   gen: 0,            // bumped on cancel so stale playback is ignored
@@ -118,9 +123,11 @@ const tts = {
   load() {
     this.voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
   },
+  useHd() { return this.server && this.hdEnabled; },
   hasUrdu() {
-    return this.server || this.voices.some((v) => v.lang.toLowerCase().startsWith("ur"));
+    return this.useHd() || this.voices.some((v) => v.lang.toLowerCase().startsWith("ur"));
   },
+  newReply() { this.replyChars = 0; this.skipped = false; },
   pickVoice(text) {
     const want = URDU_RE.test(text) ? ["ur"] : ["en-gb", "en-us", "en-in", "en"];
     for (const prefix of want) {
@@ -133,7 +140,14 @@ const tts = {
     const clean = cleanForSpeech(text);
     if (!clean) return;
     // One ordered queue: server voice (ElevenLabs/Azure) for Urdu or all sentences, device voice otherwise.
-    const useServer = this.server && (this.scope === "all" || URDU_RE.test(clean));
+    let useServer = this.useHd() && (this.scope === "all" || URDU_RE.test(clean));
+    if (useServer && this.budget && this.replyChars > 0 && this.replyChars + clean.length > this.budget) {
+      // Over this reply's credit budget: Urdu stays on screen, English uses the device voice.
+      this.skipped = true;
+      if (URDU_RE.test(clean)) return;
+      useServer = false;
+    }
+    if (useServer && !this.cache.has(clean)) this.replyChars += clean.length;
     this.items.push({ text: clean, server: useServer, promise: null });
     this.started();
     if (!this.playing) this.playNext(this.gen);
@@ -141,6 +155,7 @@ const tts = {
   // Fetch lazily: only the playing sentence and the next one (free ElevenLabs allows ~2 at once).
   fetchAudio(item) {
     if (!item || !item.server || item.promise) return;
+    if (this.cache.has(item.text)) { item.promise = this.cache.get(item.text); return; }
     item.promise = api("/api/tts", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: item.text }),
     }).then(async (res) => {
@@ -152,7 +167,10 @@ const tts = {
       }
       return res.blob();
     });
-    item.promise.catch(() => {});  // handled in playNext
+    const text = item.text;
+    this.cache.set(text, item.promise);
+    item.promise.catch(() => this.cache.delete(text));  // errors handled in playNext
+    if (this.cache.size > 100) this.cache.delete(this.cache.keys().next().value);
   },
   deviceSay(clean) {
     return new Promise((resolve) => {
@@ -185,10 +203,10 @@ const tts = {
     const item = this.items.shift();
     if (!item) { this.playing = false; return; }
     this.playing = true;
-    if (item.server && this.server) this.fetchAudio(item);
-    if (this.server) this.fetchAudio(this.items[0]);  // prefetch the next sentence only
+    if (item.server && this.useHd()) this.fetchAudio(item);
+    if (this.useHd()) this.fetchAudio(this.items[0]);  // prefetch the next sentence only
     try {
-      if (item.server && this.server) await this.playServer(item, gen);
+      if (item.server && this.useHd()) await this.playServer(item, gen);
       else await this.deviceSay(item.text);
     } catch (err) {
       if (gen !== this.gen) return;
@@ -665,6 +683,7 @@ async function send(text, mode = null) {
   tts.cancel();
   textInput.value = "";
   addMessage("user", text);
+  tts.newReply();
   call.caption("you", text);
   call.caption("tutor", "");
   call.update();
@@ -721,7 +740,10 @@ async function send(text, mode = null) {
     if (!full) el.remove();
     setStatus("");
     busy = false;
-    call.update(failed ? "Something went wrong. Tap the robot to try again." : "");
+    if (tts.skipped && !failed) setStatus("Rest of the reply is on screen (saving HD voice credits).");
+    call.update(failed ? "Something went wrong. Tap the robot to try again."
+      : tts.skipped ? "Rest of the reply is on screen (saving HD voice credits)." : "");
+    if (tts.useHd()) setTimeout(refreshHdUsage, 4000);
     // Don't reopen the mic automatically after an error (avoids an error loop in 1:1 mode).
     if (tts.queue === 0 && !failed) tts.onIdle();
     if (!$("progressPanel").hidden) loadProgress();
@@ -918,12 +940,53 @@ async function loadHistory() {
   for (const m of data.messages) addMessage(m.role, m.text);
 }
 
+// ---------- HD voice (ElevenLabs) switch and credits ----------
+function renderHd() {
+  const on = tts.hdEnabled;
+  $("hdVoice").checked = on;
+  const btn = $("hdCallBtn");
+  btn.textContent = `HD voice: ${on ? "On" : "Off"}`;
+  btn.setAttribute("aria-pressed", String(on));
+}
+
+function setHd(on) {
+  tts.hdEnabled = on;
+  storageSet("tutor.hd", on ? "1" : "0");
+  if (!on) tts.cancel();
+  renderHd();
+}
+
+function setupHdControls() {
+  if (!tts.server) return;
+  $("hdLabel").hidden = false;
+  $("hdCallBtn").hidden = false;
+  renderHd();
+  refreshHdUsage();
+}
+
+async function refreshHdUsage() {
+  try {
+    const res = await api("/api/tts/usage");
+    const usage = res.ok ? (await res.json()).usage : null;
+    if (!usage) return;
+    const text = `${usage.left.toLocaleString()} of ${usage.limit.toLocaleString()} chars left`;
+    $("hdUsageMain").textContent = `(${text})`;
+    $("hdUsageCall").textContent = `HD voice: ${text}`;
+    $("hdUsageCall").hidden = false;
+  } catch { /* usage is optional */ }
+}
+
+$("hdVoice").addEventListener("change", (e) => setHd(e.target.checked));
+$("hdCallBtn").addEventListener("click", () => setHd(!tts.hdEnabled));
+
 async function loadConfig() {
   const res = await api("/api/config");
   if (!res.ok) return;
   const data = await res.json();
   tts.server = !!data.tts;
   tts.scope = data.tts_scope || "all";
+  tts.budget = data.tts_reply_budget || null;
+  setupHdControls();
 }
 
 // Installable app: register the service worker (offline shell, home-screen install).
