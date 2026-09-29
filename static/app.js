@@ -120,6 +120,8 @@ const tts = {
   playing: false,
   gen: 0,            // bumped on cancel so stale playback is ignored
   audio: new Audio(),
+  enVoiceName: storageGet("tutor.enVoice") || "",  // chosen English device voice ("" = automatic)
+  rate: Number(storageGet("tutor.rate")) || 1,     // speaking speed for all voices
   load() {
     this.voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
   },
@@ -128,7 +130,14 @@ const tts = {
     return this.useHd() || this.voices.some((v) => v.lang.toLowerCase().startsWith("ur"));
   },
   newReply() { this.replyChars = 0; this.skipped = false; },
+  englishVoices() {
+    return this.voices.filter((v) => v.lang.toLowerCase().startsWith("en"));
+  },
   pickVoice(text) {
+    if (this.enVoiceName && !URDU_RE.test(text)) {
+      const chosen = this.voices.find((v) => v.name === this.enVoiceName);
+      if (chosen) return chosen;
+    }
     const want = URDU_RE.test(text) ? ["ur"] : ["en-gb", "en-us", "en-in", "en"];
     for (const prefix of want) {
       const v = this.voices.find((v) => v.lang.toLowerCase().replace("_", "-").startsWith(prefix));
@@ -178,7 +187,7 @@ const tts = {
       const u = new SpeechSynthesisUtterance(clean);
       const voice = this.pickVoice(clean);
       if (voice) { u.voice = voice; u.lang = voice.lang; }
-      u.rate = 1.0;
+      u.rate = this.rate;
       u.onend = u.onerror = () => resolve();
       speechSynthesis.speak(u);
     });
@@ -190,6 +199,7 @@ const tts = {
       if (gen !== this.gen) return;
       url = URL.createObjectURL(blob);
       this.audio.src = url;
+      this.audio.playbackRate = this.rate;
       await new Promise((resolve, reject) => {
         this.audio.onended = resolve;
         this.audio.onerror = () => reject(new Error("audio playback failed"));
@@ -916,6 +926,49 @@ async function loadProgress() {
       .map((n) => `<li><b>${escapeHtml(n.topic)}</b>: ${escapeHtml(n.content)}</li>`).join("")}</ul>`;
   }
   body.innerHTML = html;
+}
+
+// ---- English voice settings ----
+function fillVoiceList() {
+  const select = $("enVoice");
+  const voices = tts.englishVoices();
+  select.innerHTML = "";
+  select.append(new Option("Automatic (best available)", ""));
+  for (const v of voices) {
+    select.append(new Option(`${v.name} (${v.lang})`, v.name));
+  }
+  select.value = voices.some((v) => v.name === tts.enVoiceName) ? tts.enVoiceName : "";
+  $("voiceCount").textContent = voices.length
+    ? `${voices.length} English voice${voices.length === 1 ? "" : "s"} on this device.`
+    : "No English voices found yet on this device.";
+}
+function showRate() { $("rateValue").textContent = `${tts.rate.toFixed(1)}×`; }
+$("voiceBtn").addEventListener("click", () => {
+  tts.load();
+  fillVoiceList();
+  $("rate").value = String(tts.rate);
+  showRate();
+  $("voicePanel").hidden = false;
+});
+$("closeVoice").addEventListener("click", () => { $("voicePanel").hidden = true; });
+$("enVoice").addEventListener("change", (e) => {
+  tts.enVoiceName = e.target.value;
+  storageSet("tutor.enVoice", tts.enVoiceName);
+});
+$("rate").addEventListener("input", (e) => {
+  tts.rate = Number(e.target.value) || 1;
+  storageSet("tutor.rate", String(tts.rate));
+  showRate();
+});
+$("testVoice").addEventListener("click", () => {
+  unlockAudio();
+  tts.cancel();
+  tts.deviceSay("Hello Rizwan, this is how I will sound when I teach you. Shall we start?");
+});
+if (window.speechSynthesis) {
+  speechSynthesis.addEventListener("voiceschanged", () => {
+    if (!$("voicePanel").hidden) fillVoiceList();
+  });
 }
 
 $("progressBtn").addEventListener("click", () => { $("progressPanel").hidden = false; loadProgress(); });

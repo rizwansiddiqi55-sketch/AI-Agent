@@ -280,3 +280,18 @@ button { font: inherit; cursor: pointer; }
 .call-top > div { flex: 1; }
 .hd-btn { font-size: .82rem; padding: 6px 10px; white-space: nowrap; }
 .hd-btn[aria-pressed="false"] { opacity: .6; }
+
+/* ---------- Voice settings ---------- */
+.toggles { align-items: center; }
+.voice-btn { font-size: .82rem; padding: 4px 10px; }
+.panel .field { display: block; margin: 18px 0 6px; font-size: .9rem; font-weight: 600; }
+.panel .field-input {
+  width: 100%; padding: 10px; font-size: 1rem; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+}
+.panel input[type="range"] { width: 100%; accent-color: var(--accent); }
+.test-btn {
+  display: block; width: 100%; margin: 18px 0 10px; padding: 12px; font-size: 1rem; font-weight: 600;
+  border: 0; border-radius: 12px; background: var(--accent); color: #fff; cursor: pointer;
+}
+.panel .small { font-size: .8rem; line-height: 1.45; }
