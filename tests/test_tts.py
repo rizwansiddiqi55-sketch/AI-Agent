@@ -171,3 +171,74 @@ def test_elevenlabs_usage():
     assert asyncio.run(tts.usage()) == {"used": 2600, "limit": 10000, "left": 7400, "resets_at": 1790000000}
     denied = make_eleven(lambda r: httpx.Response(401, json={"detail": {"status": "missing_permissions"}}))
     assert asyncio.run(denied.usage()) is None
+
+
+# ---- Groq English voices (Orpheus) ----
+import io
+import json
+import wave
+
+from app.tts import GroqTTS, join_wavs, split_for_tts
+
+
+def _wav(frames: bytes) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(24000)
+        w.writeframes(frames)
+    return buf.getvalue()
+
+
+def test_split_for_tts_respects_limit_and_sentences():
+    text = "OSPF is a link-state protocol. " * 12
+    parts = split_for_tts(text)
+    assert len(parts) > 1 and all(len(p) <= 200 for p in parts)
+    assert all(p.endswith(".") for p in parts)
+    assert " ".join(parts) == " ".join(text.split())
+    assert split_for_tts("x" * 450) == ["x" * 200, "x" * 200, "x" * 50]
+    assert split_for_tts("  ") == []
+
+
+def test_join_wavs_concatenates_frames():
+    joined = join_wavs([_wav(b"\x01\x00" * 10), _wav(b"\x02\x00" * 5)])
+    with wave.open(io.BytesIO(joined), "rb") as r:
+        assert r.getnframes() == 15 and r.getframerate() == 24000
+
+
+def test_groq_tts_splits_long_text_and_joins_audio():
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        assert request.headers["Authorization"] == "Bearer gk"
+        return httpx.Response(200, content=_wav(b"\x00\x00" * 4))
+
+    tts = GroqTTS("gk", "canopylabs/orpheus-v1-english",
+                  client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    audio = asyncio.run(tts.synthesize("Hello Rizwan. " * 30, "troy"))
+    assert len(bodies) > 1 and all(len(b["input"]) <= 200 for b in bodies)
+    assert bodies[0]["voice"] == "troy" and bodies[0]["response_format"] == "wav"
+    with wave.open(io.BytesIO(audio), "rb") as r:
+        assert r.getnframes() == 4 * len(bodies)
+
+
+def test_groq_tts_errors():
+    def terms(request):
+        return httpx.Response(400, json={"error": {"message": "The model requires terms acceptance"}})
+
+    tts = GroqTTS("gk", "m", client=httpx.AsyncClient(transport=httpx.MockTransport(terms)))
+    with pytest.raises(SpeechError) as exc:
+        asyncio.run(tts.synthesize("hi", "troy"))
+    assert exc.value.status == 403 and "terms" in str(exc.value)
+
+    with pytest.raises(SpeechError) as exc:
+        asyncio.run(tts.synthesize("hi", "nobody"))
+    assert exc.value.status == 400
+
+    tts = GroqTTS("gk", "m", client=httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(429, json={}))))
+    with pytest.raises(SpeechError) as exc:
+        asyncio.run(tts.synthesize("hi", "troy"))
+    assert exc.value.status == 429

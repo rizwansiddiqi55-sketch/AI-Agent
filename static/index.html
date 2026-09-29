@@ -57,6 +57,7 @@
         <input type="checkbox" id="hdVoice"> HD Urdu voice <span class="muted" id="hdUsageMain"></span>
       </label>
       <button type="button" id="voiceBtn" class="ghost voice-btn" title="Choose the English voice and speed">🔊 Voice</button>
+      <button type="button" id="speedBtn" class="ghost voice-btn" title="Tap to change how fast the tutor speaks">⏩ Speed 1.0×</button>
     </div>
     <form id="form" class="input-row">
       <input id="textInput" type="text" autocomplete="off" placeholder="Type or tap the mic…" aria-label="Message">
@@ -75,7 +76,8 @@
         <p class="sub" id="callLang">English</p>
         <p class="sub" id="hdUsageCall" hidden></p>
       </div>
-      <button type="button" id="hdCallBtn" class="ghost hd-btn" hidden title="Natural Urdu voice (uses ElevenLabs credits)">HD voice: On</button>
+      <button type="button" id="hdCallBtn" class="ghost hd-btn" hidden title="Natural Urdu voice (uses ElevenLabs credits)">HD On</button>
+      <button type="button" id="speedCallBtn" class="ghost hd-btn" title="Tap to change how fast the tutor speaks">⏩ 1.0×</button>
       <button type="button" id="callEnd" class="end-btn">End</button>
     </header>
 
@@ -134,10 +136,10 @@
     <select id="enVoice" class="field-input"></select>
     <p class="muted" id="voiceCount"></p>
     <label class="field" for="rate">Speed <span id="rateValue">1.0×</span></label>
-    <input id="rate" type="range" min="0.7" max="1.3" step="0.1" value="1">
+    <input id="rate" type="range" min="0.5" max="1.5" step="0.1" value="1">
     <button type="button" id="testVoice" class="test-btn">▶ Test voice</button>
-    <p class="muted small">Your choice is saved on this device. English voices are free and unlimited.</p>
-    <p class="muted small"><b>iPhone: more voices.</b> Settings → Accessibility → Spoken Content → Voices → English. Download a voice (for example an Enhanced or Premium voice), then reopen this app and pick it here.</p>
+    <p class="muted small">Your choice is saved on this device. <b>Natural voices</b> (Troy, Austin, Daniel, Autumn, Diana, Hannah) sound the most human and use your free Groq key. <b>Phone voices</b> work offline.</p>
+    <p class="muted small"><b>Downloaded iPhone voices not listed?</b> iPhone only lets websites and web apps use some of its voices; most downloaded Enhanced/Premium voices stay hidden from web apps. Use a natural voice above instead.</p>
   </aside>
 
   <aside id="progressPanel" class="panel" hidden>

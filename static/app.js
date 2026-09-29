@@ -120,8 +120,14 @@ const tts = {
   playing: false,
   gen: 0,            // bumped on cancel so stale playback is ignored
   audio: new Audio(),
-  enVoiceName: storageGet("tutor.enVoice") || "",  // chosen English device voice ("" = automatic)
+  enVoiceName: storageGet("tutor.enVoice") || "",  // "" = automatic, "groq:<voice>", or a device voice name
   rate: Number(storageGet("tutor.rate")) || 1,     // speaking speed for all voices
+  groqVoices: [],    // natural English voices from the server (Groq), set from /api/config
+  groqOk: true,      // false after a Groq voice error: use the device voice for the rest of the session
+  groqVoice() {
+    const name = this.enVoiceName.startsWith("groq:") ? this.enVoiceName.slice(5) : "";
+    return this.groqOk && this.groqVoices.includes(name) ? name : "";
+  },
   load() {
     this.voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
   },
@@ -148,25 +154,33 @@ const tts = {
   speak(text) {
     const clean = cleanForSpeech(text);
     if (!clean) return;
-    // One ordered queue: server voice (ElevenLabs/Azure) for Urdu or all sentences, device voice otherwise.
-    let useServer = this.useHd() && (this.scope === "all" || URDU_RE.test(clean));
+    // One ordered queue: HD voice (ElevenLabs/Azure) for Urdu (or all) sentences, the chosen Groq
+    // English voice for English sentences, device voice otherwise.
+    const urdu = URDU_RE.test(clean);
+    let useServer = this.useHd() && (this.scope === "all" || urdu);
     if (useServer && this.budget && this.replyChars > 0 && this.replyChars + clean.length > this.budget) {
       // Over this reply's credit budget: Urdu stays on screen, English uses the device voice.
       this.skipped = true;
       if (URDU_RE.test(clean)) return;
       useServer = false;
     }
-    if (useServer && !this.cache.has(clean)) this.replyChars += clean.length;
-    this.items.push({ text: clean, server: useServer, promise: null });
+    const voice = !urdu ? this.groqVoice() : "";
+    const kind = useServer && !(voice && this.scope === "all") ? "hd" : (voice ? "en" : "");
+    if (kind === "hd" && !this.cache.has(`hd::${clean}`)) this.replyChars += clean.length;
+    this.items.push({ text: clean, kind, voice, promise: null });
     this.started();
     if (!this.playing) this.playNext(this.gen);
   },
   // Fetch lazily: only the playing sentence and the next one (free ElevenLabs allows ~2 at once).
   fetchAudio(item) {
-    if (!item || !item.server || item.promise) return;
-    if (this.cache.has(item.text)) { item.promise = this.cache.get(item.text); return; }
-    item.promise = api("/api/tts", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: item.text }),
+    if (!item || !item.kind || item.promise) return;
+    const key = `${item.kind}:${item.voice}:${item.text}`;
+    if (this.cache.has(key)) { item.promise = this.cache.get(key); return; }
+    const [path, payload] = item.kind === "en"
+      ? ["/api/tts/english", { text: item.text, voice: item.voice }]
+      : ["/api/tts", { text: item.text }];
+    item.promise = api(path, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     }).then(async (res) => {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -176,9 +190,8 @@ const tts = {
       }
       return res.blob();
     });
-    const text = item.text;
-    this.cache.set(text, item.promise);
-    item.promise.catch(() => this.cache.delete(text));  // errors handled in playNext
+    this.cache.set(key, item.promise);
+    item.promise.catch(() => this.cache.delete(key));  // errors handled in playNext
     if (this.cache.size > 100) this.cache.delete(this.cache.keys().next().value);
   },
   deviceSay(clean) {
@@ -199,6 +212,7 @@ const tts = {
       if (gen !== this.gen) return;
       url = URL.createObjectURL(blob);
       this.audio.src = url;
+      this.audio.defaultPlaybackRate = this.rate;  // loading a new src resets playbackRate to this
       this.audio.playbackRate = this.rate;
       await new Promise((resolve, reject) => {
         this.audio.onended = resolve;
@@ -213,14 +227,20 @@ const tts = {
     const item = this.items.shift();
     if (!item) { this.playing = false; return; }
     this.playing = true;
-    if (item.server && this.useHd()) this.fetchAudio(item);
-    if (this.useHd()) this.fetchAudio(this.items[0]);  // prefetch the next sentence only
+    const ready = (it) => it && (it.kind === "hd" ? this.useHd() : it.kind === "en" && this.groqOk);
+    if (ready(item)) this.fetchAudio(item);
+    if (ready(this.items[0])) this.fetchAudio(this.items[0]);  // prefetch the next sentence only
     try {
-      if (item.server && this.useHd()) await this.playServer(item, gen);
+      if (ready(item)) await this.playServer(item, gen);
       else await this.deviceSay(item.text);
     } catch (err) {
       if (gen !== this.gen) return;
-      if (err.status !== 429) {
+      if (item.kind === "en") {
+        if (err.status !== 429) {
+          this.groqOk = false;
+          setStatus(`English voice unavailable (${err.message}). Using the phone voice.`);
+        }
+      } else if (err.status !== 429) {
         // Quota used up, bad key, network...: use the device voice for the rest of this session.
         this.server = false;
         setStatus(`Natural voice unavailable (${err.message}). Using the device voice.`);
@@ -933,37 +953,65 @@ function fillVoiceList() {
   const select = $("enVoice");
   const voices = tts.englishVoices();
   select.innerHTML = "";
-  select.append(new Option("Automatic (best available)", ""));
-  for (const v of voices) {
-    select.append(new Option(`${v.name} (${v.lang})`, v.name));
+  select.append(new Option("Automatic (phone voice)", ""));
+  if (tts.groqVoices.length) {
+    const group = document.createElement("optgroup");
+    group.label = "Natural voices (free, online)";
+    for (const name of tts.groqVoices) {
+      group.append(new Option(name[0].toUpperCase() + name.slice(1), "groq:" + name));
+    }
+    select.append(group);
   }
-  select.value = voices.some((v) => v.name === tts.enVoiceName) ? tts.enVoiceName : "";
-  $("voiceCount").textContent = voices.length
-    ? `${voices.length} English voice${voices.length === 1 ? "" : "s"} on this device.`
-    : "No English voices found yet on this device.";
+  if (voices.length) {
+    const group = document.createElement("optgroup");
+    group.label = "Phone voices";
+    for (const v of voices) group.append(new Option(`${v.name} (${v.lang})`, v.name));
+    select.append(group);
+  }
+  const known = [...select.options].some((o) => o.value === tts.enVoiceName);
+  select.value = known ? tts.enVoiceName : "";
+  $("voiceCount").textContent =
+    `${tts.groqVoices.length ? tts.groqVoices.length + " natural voices · " : ""}` +
+    `${voices.length} phone voice${voices.length === 1 ? "" : "s"} visible to this app.`;
 }
-function showRate() { $("rateValue").textContent = `${tts.rate.toFixed(1)}×`; }
+const RATES = [0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.5];
+function setRate(value) {
+  tts.rate = Math.min(1.5, Math.max(0.5, Number(value) || 1));
+  storageSet("tutor.rate", String(tts.rate));
+  try { tts.audio.playbackRate = tts.rate; } catch { /* ignore */ }  // applies to audio already playing
+  showRate();
+}
+function showRate() {
+  const label = `${tts.rate.toFixed(1)}×`;
+  $("rateValue").textContent = label;
+  $("rate").value = String(tts.rate);
+  $("speedBtn").textContent = `⏩ Speed ${label}`;
+  $("speedCallBtn").textContent = `⏩ ${label}`;
+}
+function nextRate() {
+  const i = RATES.findIndex((r) => r > tts.rate + 0.001);
+  setRate(i === -1 ? RATES[0] : RATES[i]);
+}
+for (const id of ["speedBtn", "speedCallBtn"]) $(id).addEventListener("click", nextRate);
+showRate();
 $("voiceBtn").addEventListener("click", () => {
   tts.load();
   fillVoiceList();
-  $("rate").value = String(tts.rate);
   showRate();
   $("voicePanel").hidden = false;
 });
 $("closeVoice").addEventListener("click", () => { $("voicePanel").hidden = true; });
 $("enVoice").addEventListener("change", (e) => {
   tts.enVoiceName = e.target.value;
+  tts.groqOk = true;  // give a newly chosen natural voice another try
   storageSet("tutor.enVoice", tts.enVoiceName);
 });
-$("rate").addEventListener("input", (e) => {
-  tts.rate = Number(e.target.value) || 1;
-  storageSet("tutor.rate", String(tts.rate));
-  showRate();
-});
+$("rate").addEventListener("input", (e) => setRate(e.target.value));
 $("testVoice").addEventListener("click", () => {
   unlockAudio();
   tts.cancel();
-  tts.deviceSay("Hello Rizwan, this is how I will sound when I teach you. Shall we start?");
+  tts.newReply();
+  tts.speak("Hello Rizwan, this is how I will sound when I teach you. Shall we start?");
 });
 if (window.speechSynthesis) {
   speechSynthesis.addEventListener("voiceschanged", () => {
@@ -998,7 +1046,7 @@ function renderHd() {
   const on = tts.hdEnabled;
   $("hdVoice").checked = on;
   const btn = $("hdCallBtn");
-  btn.textContent = `HD voice: ${on ? "On" : "Off"}`;
+  btn.textContent = `HD ${on ? "On" : "Off"}`;
   btn.setAttribute("aria-pressed", String(on));
 }
 
@@ -1039,6 +1087,7 @@ async function loadConfig() {
   tts.server = !!data.tts;
   tts.scope = data.tts_scope || "all";
   tts.budget = data.tts_reply_budget || null;
+  tts.groqVoices = Array.isArray(data.english_voices) ? data.english_voices : [];
   setupHdControls();
 }
 

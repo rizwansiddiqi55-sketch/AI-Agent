@@ -295,3 +295,9 @@ button { font: inherit; cursor: pointer; }
   border: 0; border-radius: 12px; background: var(--accent); color: #fff; cursor: pointer;
 }
 .panel .small { font-size: .8rem; line-height: 1.45; }
+.call-top h2 { white-space: nowrap; }
+.call-top { gap: 6px; }
+.call-top > div { min-width: 0; }
+.call-top .hd-btn { padding: 6px 8px; }
+.end-btn { flex-shrink: 0; }
+@media (max-width: 400px) { .call-top h2 { font-size: 1rem; } }

@@ -1,8 +1,10 @@
 """Server-side text-to-speech: ElevenLabs (Eleven v3, supports Urdu) or Azure Speech neural voices."""
 
 import asyncio
+import io
 import logging
 import re
+import wave
 from xml.sax.saxutils import escape
 
 import httpx
@@ -189,3 +191,95 @@ def _elevenlabs_detail(res: httpx.Response) -> dict:
     if isinstance(detail, str):
         return {"message": detail}
     return {}
+
+
+GROQ_ENGLISH_VOICES = ("troy", "austin", "daniel", "autumn", "diana", "hannah")
+GROQ_TTS_MAX_CHARS = 200  # Orpheus limit per request
+
+
+def split_for_tts(text: str, limit: int = GROQ_TTS_MAX_CHARS) -> list[str]:
+    """Split text into pieces of at most `limit` chars, at sentence ends, then commas, then spaces."""
+    text = " ".join(text.split())
+    parts: list[str] = []
+    while len(text) > limit:
+        window = text[: limit + 1]
+        cut = -1
+        for pattern in (r"[.!?]\s", r"[,;:]\s", r"\s"):
+            ends = [m.end() for m in re.finditer(pattern, window)]
+            if ends:
+                cut = ends[-1]
+                break
+        if cut <= 0:
+            cut = limit
+        parts.append(text[:cut].strip())
+        text = text[cut:].strip()
+    if text:
+        parts.append(text)
+    return parts
+
+
+def join_wavs(chunks: list[bytes]) -> bytes:
+    """Concatenate WAV files that share one format into a single WAV."""
+    if len(chunks) == 1:
+        return chunks[0]
+    out = io.BytesIO()
+    writer = None
+    for data in chunks:
+        with wave.open(io.BytesIO(data), "rb") as reader:
+            if writer is None:
+                writer = wave.open(out, "wb")
+                writer.setparams(reader.getparams())
+            writer.writeframes(reader.readframes(reader.getnframes()))
+    writer.close()
+    return out.getvalue()
+
+
+class GroqTTS:
+    """Natural English voices from Groq (Canopy Labs Orpheus), using the same GROQ_API_KEY."""
+
+    URL = "https://api.groq.com/openai/v1/audio/speech"
+
+    def __init__(self, api_key: str, model: str, client: httpx.AsyncClient | None = None):
+        self.api_key = api_key
+        self.model = model
+        self.client = client or httpx.AsyncClient(timeout=30)
+
+    async def synthesize(self, text: str, voice: str) -> bytes:
+        if voice not in GROQ_ENGLISH_VOICES:
+            raise SpeechError(f"Unknown voice '{voice}'.", 400)
+        parts = split_for_tts(text[:MAX_TTS_CHARS])
+        if not parts:
+            raise SpeechError("No text to speak.", 400)
+        return join_wavs([await self._synthesize(part, voice) for part in parts])
+
+    async def _synthesize(self, text: str, voice: str) -> bytes:
+        try:
+            res = await self.client.post(
+                self.URL,
+                json={"model": self.model, "voice": voice, "input": text, "response_format": "wav"},
+                headers={"Authorization": f"Bearer {self.api_key}"},
+            )
+        except httpx.HTTPError as exc:
+            raise SpeechError(f"Could not reach Groq: {exc.__class__.__name__}") from exc
+        if res.status_code == 200:
+            return res.content
+        message = _groq_error_message(res)
+        if res.status_code == 401:
+            raise SpeechError("Groq API key is invalid (GROQ_API_KEY).")
+        if res.status_code == 429:
+            raise SpeechError("Groq voice limit reached for now. Try again later.", 429)
+        if "terms" in message.lower():
+            raise SpeechError("Accept the Orpheus model terms once in the Groq console "
+                              f"(Playground → {self.model}), then try again.", 403)
+        raise SpeechError(f"Groq voice error {res.status_code}: {message}")
+
+
+def _groq_error_message(res: httpx.Response) -> str:
+    try:
+        body = res.json()
+    except ValueError:
+        return res.text[:200]
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict) and error.get("message"):
+        return str(error["message"])
+    return res.text[:200]

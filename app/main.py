@@ -23,7 +23,7 @@ from .config import ON_VERCEL, get_settings
 from .memory import LEVELS, SUBJECTS, Memory
 from .modes import MODES
 from .stt import TranscriptionError, transcribe
-from .tts import AzureTTS, ElevenLabsTTS, SpeechError
+from .tts import GROQ_ENGLISH_VOICES, AzureTTS, ElevenLabsTTS, GroqTTS, SpeechError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -91,6 +91,11 @@ class ChatRequest(BaseModel):
 
 class SpeakRequest(BaseModel):
     text: str = Field(max_length=4000)
+
+
+class EnglishSpeakRequest(BaseModel):
+    text: str = Field(max_length=4000)
+    voice: str = Field(max_length=40)
 
 
 class ResetRequest(BaseModel):
@@ -199,7 +204,8 @@ async def config():
     settings = get_settings()
     budget = settings.elevenlabs_reply_char_budget if settings.elevenlabs_api_key else None
     return {"tts": tts is not None, "tts_scope": tts_scope() if tts else None,
-            "tts_reply_budget": budget, "stt": bool(settings.groq_api_key)}
+            "tts_reply_budget": budget, "stt": bool(settings.groq_api_key),
+            "english_voices": list(GROQ_ENGLISH_VOICES) if settings.groq_api_key else []}
 
 
 @app.get("/api/tts/usage")
@@ -223,6 +229,31 @@ async def speak(req: SpeakRequest):
         logging.getLogger("tutor.tts").warning("TTS failed: %s", exc)
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
     return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+
+
+_groq_tts: GroqTTS | None = None
+
+
+def get_groq_tts() -> GroqTTS | None:
+    global _groq_tts
+    settings = get_settings()
+    if _groq_tts is None and settings.groq_api_key:
+        _groq_tts = GroqTTS(settings.groq_api_key, settings.groq_tts_model)
+    return _groq_tts
+
+
+@app.post("/api/tts/english")
+async def speak_english(req: EnglishSpeakRequest):
+    """Natural English voice from Groq (chosen in the page's voice settings). Returns WAV."""
+    tts = get_groq_tts()
+    if tts is None:
+        return JSONResponse({"detail": "English voices need GROQ_API_KEY."}, status_code=501)
+    try:
+        audio = await tts.synthesize(req.text, req.voice)
+    except SpeechError as exc:
+        logging.getLogger("tutor.tts").warning("Groq TTS failed: %s", exc)
+        return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+    return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/library")

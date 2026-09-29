@@ -161,6 +161,33 @@ def test_tts_and_config_endpoints(memory, monkeypatch):
         get_settings.cache_clear()
 
 
+def test_english_voice_endpoint(memory, monkeypatch):
+    class FakeGroqTTS:
+        async def synthesize(self, text, voice):
+            return b"RIFF" + f"{voice}:{text}".encode()
+
+    from app import main
+    from app.config import get_settings
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    get_settings.cache_clear()
+    monkeypatch.setattr(main, "_groq_tts", None)
+    try:
+        client = make_client(memory, [])
+        assert client.get("/api/config").json()["english_voices"] == []
+        assert client.post("/api/tts/english", json={"text": "hi", "voice": "troy"}).status_code == 501
+
+        monkeypatch.setenv("GROQ_API_KEY", "gk")
+        get_settings.cache_clear()
+        monkeypatch.setattr(main, "_groq_tts", FakeGroqTTS())
+        assert "troy" in client.get("/api/config").json()["english_voices"]
+        res = client.post("/api/tts/english", json={"text": "hi", "voice": "troy"})
+        assert res.status_code == 200 and res.headers["content-type"] == "audio/wav"
+        assert res.content == b"RIFFtroy:hi"
+    finally:
+        get_settings.cache_clear()
+
+
 def test_library_endpoint(memory):
     client = make_client(memory, [])
     topics = client.get("/api/library").json()["topics"]

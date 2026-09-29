@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     groq_system_prompt_path: str = str(ROOT_DIR / "prompts" / "compact_system_prompt.md")
     # Whisper model for server-side speech recognition (needs GROQ_API_KEY, any LLM provider)
     groq_stt_model: str = "whisper-large-v3"
+    # Natural English voices (Troy, Austin, Daniel, Autumn, Diana, Hannah); needs GROQ_API_KEY.
+    groq_tts_model: str = "canopylabs/orpheus-v1-english"
 
     # ElevenLabs text-to-speech (used instead of Azure when a key is set).
     elevenlabs_api_key: str | None = None
