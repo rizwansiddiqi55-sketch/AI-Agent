@@ -242,3 +242,70 @@ def test_groq_tts_errors():
     with pytest.raises(SpeechError) as exc:
         asyncio.run(tts.synthesize("hi", "troy"))
     assert exc.value.status == 429
+
+
+def test_groq_retry_after_parsing():
+    from app.tts import groq_retry_after
+
+    def res(headers=None):
+        return httpx.Response(429, headers=headers or {})
+
+    assert groq_retry_after(res({"retry-after": "7"}), "") == 7
+    assert groq_retry_after(res(), "Please try again in 6s. Need more tokens?") == 6
+    assert groq_retry_after(res(), "Please try again in 1m30.5s.") == 90.5
+    assert groq_retry_after(res(), "Please try again in 2h3m") == 2 * 3600 + 180
+    assert groq_retry_after(res(), "Please try again in 450ms") == 0.45
+    assert groq_retry_after(res(), "rate limited") is None
+
+
+def test_groq_tts_waits_briefly_on_rate_limit_then_succeeds():
+    calls, slept = [], []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(429, json={"error": {"message": "Please try again in 6s."}})
+        return httpx.Response(200, content=_wav(b"\x00\x00"))
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    tts = GroqTTS("gk", "m", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+                  sleep=fake_sleep)
+    assert asyncio.run(tts.synthesize("hi", "troy"))
+    assert len(calls) == 2 and slept and slept[0] >= 6
+
+
+def test_groq_tts_long_limit_returns_retry_after():
+    tts = GroqTTS("gk", "m", client=httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda r: httpx.Response(429, json={"error": {"message": "Please try again in 2m0s."}}))))
+    with pytest.raises(SpeechError) as exc:
+        asyncio.run(tts.synthesize("hi", "troy"))
+    assert exc.value.status == 429 and exc.value.retry_after == 120
+
+
+def test_groq_tts_stays_under_requests_per_minute():
+    now = [0.0]
+    slept = []
+
+    async def fake_sleep(s):
+        slept.append(s)
+        now[0] += s
+
+    tts = GroqTTS("gk", "m", rpm=2, clock=lambda: now[0], sleep=fake_sleep,
+                  client=httpx.AsyncClient(transport=httpx.MockTransport(
+                      lambda r: httpx.Response(200, content=_wav(b"\x00\x00")))))
+
+    async def run():
+        await tts.synthesize("one", "troy")
+        now[0] = 55.0
+        await tts.synthesize("two", "troy")
+        await tts.synthesize("three", "troy")  # 3rd in the minute: waits ~5s for a free slot
+        now[0] = 58.0
+        with pytest.raises(SpeechError) as exc:  # next free slot is >8s away: don't block
+            await tts.synthesize("four", "troy")
+        return exc.value
+
+    err = asyncio.run(run())
+    assert slept == [5.0]
+    assert err.status == 429 and err.retry_after > 8

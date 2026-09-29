@@ -252,7 +252,8 @@ async def speak_english(req: EnglishSpeakRequest):
         audio = await tts.synthesize(req.text, req.voice)
     except SpeechError as exc:
         logging.getLogger("tutor.tts").warning("Groq TTS failed: %s", exc)
-        return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+        headers = {"Retry-After": str(max(1, round(exc.retry_after)))} if exc.retry_after else None
+        return JSONResponse({"detail": str(exc)}, status_code=exc.status, headers=headers)
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 

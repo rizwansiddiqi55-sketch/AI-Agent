@@ -4,7 +4,9 @@ import asyncio
 import io
 import logging
 import re
+import time
 import wave
+from collections import deque
 from xml.sax.saxutils import escape
 
 import httpx
@@ -16,9 +18,10 @@ _LATIN = re.compile(r"[A-Za-z]")
 
 
 class SpeechError(Exception):
-    def __init__(self, message: str, status: int = 502):
+    def __init__(self, message: str, status: int = 502, retry_after: float | None = None):
         super().__init__(message)
         self.status = status
+        self.retry_after = retry_after
 
 
 def is_urdu(text: str) -> bool:
@@ -238,11 +241,35 @@ class GroqTTS:
     """Natural English voices from Groq (Canopy Labs Orpheus), using the same GROQ_API_KEY."""
 
     URL = "https://api.groq.com/openai/v1/audio/speech"
+    # Short rate-limit waits are worth it (the sentence still gets the natural voice); longer ones
+    # are returned as 429 + Retry-After so the page uses the phone voice meanwhile.
+    MAX_WAIT = 8.0
 
-    def __init__(self, api_key: str, model: str, client: httpx.AsyncClient | None = None):
+    def __init__(self, api_key: str, model: str, client: httpx.AsyncClient | None = None,
+                 rpm: int = 10, clock=time.monotonic, sleep=asyncio.sleep):
         self.api_key = api_key
         self.model = model
         self.client = client or httpx.AsyncClient(timeout=30)
+        self.rpm = rpm  # Groq free tier: 10 requests per minute for Orpheus
+        self._sent: deque[float] = deque()
+        self._clock = clock
+        self._sleep = sleep
+        self._lock = asyncio.Lock()
+
+    async def _take_slot(self) -> None:
+        """Stay under the requests-per-minute limit (per server instance)."""
+        async with self._lock:
+            now = self._clock()
+            while self._sent and now - self._sent[0] >= 60:
+                self._sent.popleft()
+            if self.rpm and len(self._sent) >= self.rpm:
+                wait = 60 - (now - self._sent[0])
+                if wait > self.MAX_WAIT:
+                    raise SpeechError("Natural voice: free limit of 10 requests per minute reached.",
+                                      429, retry_after=wait)
+                await self._sleep(wait)
+                self._sent.popleft()
+            self._sent.append(self._clock())
 
     async def synthesize(self, text: str, voice: str) -> bytes:
         if voice not in GROQ_ENGLISH_VOICES:
@@ -253,6 +280,18 @@ class GroqTTS:
         return join_wavs([await self._synthesize(part, voice) for part in parts])
 
     async def _synthesize(self, text: str, voice: str) -> bytes:
+        for attempt in range(3):
+            try:
+                return await self._request(text, voice)
+            except SpeechError as exc:
+                wait = exc.retry_after
+                if exc.status != 429 or wait is None or wait > self.MAX_WAIT or attempt == 2:
+                    raise
+                await self._sleep(wait + 0.3)
+        raise AssertionError("unreachable")
+
+    async def _request(self, text: str, voice: str) -> bytes:
+        await self._take_slot()
         try:
             res = await self.client.post(
                 self.URL,
@@ -267,11 +306,26 @@ class GroqTTS:
         if res.status_code == 401:
             raise SpeechError("Groq API key is invalid (GROQ_API_KEY).")
         if res.status_code == 429:
-            raise SpeechError("Groq voice limit reached for now. Try again later.", 429)
+            wait = groq_retry_after(res, message)
+            raise SpeechError("Natural voice: Groq free limit reached"
+                              + (f", try again in {wait:.0f}s." if wait else "."), 429, retry_after=wait)
         if "terms" in message.lower():
             raise SpeechError("Accept the Orpheus model terms once in the Groq console "
                               f"(Playground → {self.model}), then try again.", 403)
         raise SpeechError(f"Groq voice error {res.status_code}: {message}")
+
+
+def groq_retry_after(res: httpx.Response, message: str) -> float | None:
+    """Seconds to wait, from the Retry-After header or 'try again in 1h2m3.5s' in the message."""
+    try:
+        return float(res.headers["retry-after"])
+    except (KeyError, ValueError):
+        pass
+    match = re.search(r"try again in (?:([\d.]+)h)?(?:([\d.]+)m(?!s))?(?:([\d.]+)s)?(?:([\d.]+)ms)?", message)
+    if not match or not any(match.groups()):
+        return None
+    h, m, sec, ms = (float(g) if g else 0.0 for g in match.groups())
+    return h * 3600 + m * 60 + sec + ms / 1000
 
 
 def _groq_error_message(res: httpx.Response) -> str:

@@ -124,8 +124,10 @@ const tts = {
   rate: Number(storageGet("tutor.rate")) || 1,     // speaking speed for all voices
   groqVoices: [],    // natural English voices from the server (Groq), set from /api/config
   groqOk: true,      // false after a Groq voice error: use the device voice for the rest of the session
+  groqPausedUntil: 0, // Groq free plan allows 10 requests/minute: phone voice until the limit clears
   groqVoice() {
     const name = this.enVoiceName.startsWith("groq:") ? this.enVoiceName.slice(5) : "";
+    if (Date.now() < this.groqPausedUntil) return "";
     return this.groqOk && this.groqVoices.includes(name) ? name : "";
   },
   load() {
@@ -167,6 +169,14 @@ const tts = {
     const voice = !urdu ? this.groqVoice() : "";
     const kind = useServer && !(voice && this.scope === "all") ? "hd" : (voice ? "en" : "");
     if (kind === "hd" && !this.cache.has(`hd::${clean}`)) this.replyChars += clean.length;
+    // Natural English voice: join queued sentences into one request (Groq allows 200 characters
+    // per request and 10 requests per minute on the free plan).
+    const last = this.items[this.items.length - 1];
+    if (kind === "en" && last && last.kind === "en" && last.voice === voice && !last.promise
+        && last.text.length + clean.length < 200) {
+      last.text += " " + clean;
+      return;
+    }
     this.items.push({ text: clean, kind, voice, promise: null });
     this.started();
     if (!this.playing) this.playNext(this.gen);
@@ -186,6 +196,7 @@ const tts = {
         const data = await res.json().catch(() => ({}));
         const err = new Error(data.detail || `HTTP ${res.status}`);
         err.status = res.status;
+        err.retryAfter = Number(res.headers.get("Retry-After")) || 0;
         throw err;
       }
       return res.blob();
@@ -210,6 +221,8 @@ const tts = {
     try {
       const blob = await item.promise;
       if (gen !== this.gen) return;
+      // Prefetch the next sentence only now, so sentences that arrived meanwhile are joined into it.
+      if (this.ready(this.items[0])) this.fetchAudio(this.items[0]);
       url = URL.createObjectURL(blob);
       this.audio.src = url;
       this.audio.defaultPlaybackRate = this.rate;  // loading a new src resets playbackRate to this
@@ -227,16 +240,21 @@ const tts = {
     const item = this.items.shift();
     if (!item) { this.playing = false; return; }
     this.playing = true;
-    const ready = (it) => it && (it.kind === "hd" ? this.useHd() : it.kind === "en" && this.groqOk);
-    if (ready(item)) this.fetchAudio(item);
-    if (ready(this.items[0])) this.fetchAudio(this.items[0]);  // prefetch the next sentence only
+    const ready = this.ready(item);
+    if (ready) this.fetchAudio(item);
+    if (!ready && this.ready(this.items[0])) this.fetchAudio(this.items[0]);  // prefetch while the phone speaks
     try {
-      if (ready(item)) await this.playServer(item, gen);
+      if (ready) await this.playServer(item, gen);
       else await this.deviceSay(item.text);
     } catch (err) {
       if (gen !== this.gen) return;
       if (item.kind === "en") {
-        if (err.status !== 429) {
+        if (err.status === 429) {
+          // Free-plan limit: phone voice until it clears (long waits mean a daily limit).
+          const wait = err.retryAfter || 20;
+          this.groqPausedUntil = Date.now() + wait * 1000;
+          if (wait > 60) setStatus(`Natural voice free limit reached; phone voice for about ${Math.ceil(wait / 60)} min.`);
+        } else {
           this.groqOk = false;
           setStatus(`English voice unavailable (${err.message}). Using the phone voice.`);
         }
@@ -251,6 +269,11 @@ const tts = {
     if (gen !== this.gen) return;
     this.finished();
     this.playNext(gen);
+  },
+  ready(item) {
+    if (!item) return false;
+    if (item.kind === "hd") return this.useHd();
+    return item.kind === "en" && this.groqOk && (!!item.promise || Date.now() >= this.groqPausedUntil);
   },
   started() {
     this.queue++;
