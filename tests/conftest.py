@@ -71,3 +71,12 @@ def memory(request, tmp_path):
             conn.execute(f"DROP TABLE IF EXISTS {TABLES}")
         return Memory(PG_URL)
     return Memory(str(tmp_path / "test.db"))
+
+
+@pytest.fixture(autouse=True)
+def _reset_voice_singletons(monkeypatch):
+    """Voice clients are cached per process; start every test without them."""
+    import app.main as main
+
+    for name in ("_tts", "_groq_tts", "_gemini_tts"):
+        monkeypatch.setattr(main, name, None)

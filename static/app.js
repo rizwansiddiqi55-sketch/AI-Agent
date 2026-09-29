@@ -123,13 +123,17 @@ const tts = {
   enVoiceName: storageGet("tutor.enVoice") || "",  // "" = automatic, "groq:<voice>", or a device voice name
   rate: Number(storageGet("tutor.rate")) || 1,     // speaking speed for all voices
   groqVoices: [],    // natural English voices from the server (Groq), set from /api/config
-  groqOk: true,      // false after a Groq voice error: use the device voice for the rest of the session
-  groqPausedUntil: 0, // Groq free plan allows 10 requests/minute: phone voice until the limit clears
-  hdPausedUntil: 0,   // same for the Urdu voice (Gemini free tier is limited per minute/day)
-  groqVoice() {
-    const name = this.enVoiceName.startsWith("groq:") ? this.enVoiceName.slice(5) : "";
-    if (Date.now() < this.groqPausedUntil) return "";
-    return this.groqOk && this.groqVoices.includes(name) ? name : "";
+  geminiVoices: [],  // [{name, desc}] Gemini voices, set from /api/config
+  enOk: true,        // false after a natural-voice error: use the device voice for the rest of the session
+  enPausedUntil: 0,  // free plans are limited per minute/day: phone voice until the limit clears
+  hdPausedUntil: 0,  // same for the Urdu voice
+  // The chosen natural English voice as "groq:<name>" / "gemini:<Name>", or "" for the phone voice.
+  englishVoice() {
+    const [provider, name] = this.enVoiceName.split(":");
+    const available = provider === "groq" ? this.groqVoices.includes(name)
+      : provider === "gemini" ? this.geminiVoices.some((v) => v.name === name) : false;
+    if (!available || !this.enOk || Date.now() < this.enPausedUntil) return "";
+    return this.enVoiceName;
   },
   load() {
     this.voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
@@ -167,13 +171,13 @@ const tts = {
       if (URDU_RE.test(clean)) return;
       useServer = false;
     }
-    const voice = !urdu ? this.groqVoice() : "";
+    const voice = !urdu ? this.englishVoice() : "";
     const kind = useServer && !(voice && this.scope === "all") ? "hd" : (voice ? "en" : "");
     if (kind === "hd" && !this.cache.has(`hd::${clean}`)) this.replyChars += clean.length;
     // Join queued sentences into one request: the free voices are limited by requests per minute
     // (Groq also allows only 200 characters per request).
     const last = this.items[this.items.length - 1];
-    const maxJoin = kind === "en" ? 200 : 450;
+    const maxJoin = voice.startsWith("groq:") ? 200 : 450;
     if (kind && last && last.kind === kind && last.voice === voice && !last.promise
         && last.text.length + clean.length < maxJoin) {
       last.text += " " + clean;
@@ -254,10 +258,10 @@ const tts = {
         if (err.status === 429) {
           // Free-plan limit: phone voice until it clears (long waits mean a daily limit).
           const wait = err.retryAfter || 20;
-          this.groqPausedUntil = Date.now() + wait * 1000;
+          this.enPausedUntil = Date.now() + wait * 1000;
           if (wait > 60) setStatus(`Natural voice free limit reached; phone voice for about ${Math.ceil(wait / 60)} min.`);
         } else {
-          this.groqOk = false;
+          this.enOk = false;
           setStatus(`English voice unavailable (${err.message}). Using the phone voice.`);
         }
       } else if (err.status === 429 && err.retryAfter) {
@@ -279,7 +283,7 @@ const tts = {
   ready(item) {
     if (!item) return false;
     if (item.kind === "hd") return this.useHd() && (!!item.promise || Date.now() >= this.hdPausedUntil);
-    return item.kind === "en" && this.groqOk && (!!item.promise || Date.now() >= this.groqPausedUntil);
+    return item.kind === "en" && this.enOk && (!!item.promise || Date.now() >= this.enPausedUntil);
   },
   started() {
     this.queue++;
@@ -983,9 +987,15 @@ function fillVoiceList() {
   const voices = tts.englishVoices();
   select.innerHTML = "";
   select.append(new Option("Automatic (phone voice)", ""));
+  if (tts.geminiVoices.length) {
+    const group = document.createElement("optgroup");
+    group.label = "Gemini voices (free, online)";
+    for (const v of tts.geminiVoices) group.append(new Option(`${v.name} (${v.desc})`, "gemini:" + v.name));
+    select.append(group);
+  }
   if (tts.groqVoices.length) {
     const group = document.createElement("optgroup");
-    group.label = "Natural voices (free, online)";
+    group.label = "Groq voices (free, 10 per minute)";
     for (const name of tts.groqVoices) {
       group.append(new Option(name[0].toUpperCase() + name.slice(1), "groq:" + name));
     }
@@ -999,8 +1009,9 @@ function fillVoiceList() {
   }
   const known = [...select.options].some((o) => o.value === tts.enVoiceName);
   select.value = known ? tts.enVoiceName : "";
+  const natural = tts.groqVoices.length + tts.geminiVoices.length;
   $("voiceCount").textContent =
-    `${tts.groqVoices.length ? tts.groqVoices.length + " natural voices · " : ""}` +
+    `${natural ? natural + " natural voices · " : ""}` +
     `${voices.length} phone voice${voices.length === 1 ? "" : "s"} visible to this app.`;
 }
 const RATES = [0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.5];
@@ -1032,7 +1043,8 @@ $("voiceBtn").addEventListener("click", () => {
 $("closeVoice").addEventListener("click", () => { $("voicePanel").hidden = true; });
 $("enVoice").addEventListener("change", (e) => {
   tts.enVoiceName = e.target.value;
-  tts.groqOk = true;  // give a newly chosen natural voice another try
+  tts.enOk = true;  // give a newly chosen natural voice another try
+  tts.enPausedUntil = 0;
   storageSet("tutor.enVoice", tts.enVoiceName);
 });
 $("rate").addEventListener("input", (e) => setRate(e.target.value));
@@ -1117,6 +1129,7 @@ async function loadConfig() {
   tts.scope = data.tts_scope || "all";
   tts.budget = data.tts_reply_budget || null;
   tts.groqVoices = Array.isArray(data.english_voices) ? data.english_voices : [];
+  tts.geminiVoices = Array.isArray(data.gemini_voices) ? data.gemini_voices : [];
   setupHdControls();
 }
 

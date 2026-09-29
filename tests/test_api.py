@@ -209,6 +209,49 @@ def test_gemini_is_the_urdu_voice_with_elevenlabs_backup(memory, monkeypatch):
         get_settings.cache_clear()
 
 
+def test_english_gemini_voice_and_groq_fallback(memory, monkeypatch):
+    from app import main
+    from app.config import get_settings
+    from app.tts import SpeechError
+
+    spoken = []
+
+    class FakeGemini:
+        async def synthesize(self, text, voice=None, style=None):
+            spoken.append((voice, style))
+            return b"RIFFgemini"
+
+    class LimitedGroq:
+        async def synthesize(self, text, voice):
+            raise SpeechError("limit", 429, retry_after=3600)
+
+    monkeypatch.setenv("GROQ_API_KEY", "gk")
+    monkeypatch.setenv("GEMINI_API_KEY", "mk")
+    get_settings.cache_clear()
+    monkeypatch.setattr(main, "_gemini_tts", FakeGemini())
+    monkeypatch.setattr(main, "_groq_tts", LimitedGroq())
+    try:
+        client = make_client(memory, [])
+        cfg = client.get("/api/config").json()
+        assert {"name": "Kore", "desc": "female, firm"} in cfg["gemini_voices"]
+
+        res = client.post("/api/tts/english", json={"text": "hi", "voice": "gemini:Kore"})
+        assert res.status_code == 200 and res.content == b"RIFFgemini"
+        assert spoken[-1][0] == "Kore" and "English" in spoken[-1][1]
+
+        # Groq voice over its limit: Gemini's default English voice speaks instead
+        res = client.post("/api/tts/english", json={"text": "hi", "voice": "groq:troy"})
+        assert res.status_code == 200 and spoken[-1][0] == "Puck"
+
+        monkeypatch.setattr(main, "_gemini_tts", None)
+        monkeypatch.delenv("GEMINI_API_KEY")
+        get_settings.cache_clear()
+        res = client.post("/api/tts/english", json={"text": "hi", "voice": "troy"})
+        assert res.status_code == 429 and res.headers["Retry-After"] == "3600"
+    finally:
+        get_settings.cache_clear()
+
+
 def test_library_endpoint(memory):
     client = make_client(memory, [])
     topics = client.get("/api/library").json()["topics"]

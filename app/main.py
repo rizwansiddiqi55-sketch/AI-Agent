@@ -23,7 +23,7 @@ from .config import ON_VERCEL, get_settings
 from .memory import LEVELS, SUBJECTS, Memory
 from .modes import MODES
 from .stt import TranscriptionError, transcribe
-from .tts import GROQ_ENGLISH_VOICES, AzureTTS, ChainTTS, ElevenLabsTTS, GeminiTTS, GroqTTS, SpeechError
+from .tts import GEMINI_ENGLISH_VOICES, GROQ_ENGLISH_VOICES, AzureTTS, ChainTTS, ElevenLabsTTS, GeminiTTS, GroqTTS, SpeechError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -171,6 +171,18 @@ async def transcribe_audio(request: Request, lang: str | None = None):
 
 
 _tts: Any = None
+_gemini_tts: GeminiTTS | None = None
+
+
+def get_gemini_tts() -> GeminiTTS | None:
+    """One Gemini client for both the Urdu voice and the English voices."""
+    global _gemini_tts
+    settings = get_settings()
+    if _gemini_tts is None and settings.gemini_api_key:
+        _gemini_tts = GeminiTTS(settings.gemini_api_key, settings.gemini_tts_model,
+                                settings.gemini_tts_voice, settings.gemini_tts_style,
+                                settings.gemini_tts_fallback_model)
+    return _gemini_tts
 
 
 def get_tts() -> Any:
@@ -181,9 +193,8 @@ def get_tts() -> Any:
         return _tts
     eleven = (ElevenLabsTTS(settings.elevenlabs_api_key, settings.elevenlabs_voice_id,
                             settings.elevenlabs_model) if settings.elevenlabs_api_key else None)
-    if settings.gemini_api_key:
-        gemini = GeminiTTS(settings.gemini_api_key, settings.gemini_tts_model, settings.gemini_tts_voice,
-                           settings.gemini_tts_style, settings.gemini_tts_fallback_model)
+    gemini = get_gemini_tts()
+    if gemini:
         _tts = ChainTTS([gemini, eleven] if eleven else [gemini])
     elif eleven:
         _tts = eleven
@@ -212,7 +223,9 @@ async def config():
               if settings.elevenlabs_api_key and not settings.gemini_api_key else None)
     return {"tts": tts is not None, "tts_scope": tts_scope() if tts else None,
             "tts_reply_budget": budget, "stt": bool(settings.groq_api_key),
-            "english_voices": list(GROQ_ENGLISH_VOICES) if settings.groq_api_key else []}
+            "english_voices": list(GROQ_ENGLISH_VOICES) if settings.groq_api_key else [],
+            "gemini_voices": ([{"name": n, "desc": d} for n, d in GEMINI_ENGLISH_VOICES]
+                              if settings.gemini_api_key else [])}
 
 
 @app.get("/api/tts/usage")
@@ -255,14 +268,33 @@ def get_groq_tts() -> GroqTTS | None:
 
 @app.post("/api/tts/english")
 async def speak_english(req: EnglishSpeakRequest):
-    """Natural English voice from Groq (chosen in the page's voice settings). Returns WAV."""
-    tts = get_groq_tts()
-    if tts is None:
-        return JSONResponse({"detail": "English voices need GROQ_API_KEY."}, status_code=501)
+    """Natural English voice chosen in the page's voice settings: "gemini:<Voice>" or "groq:<voice>"
+    (a bare name means Groq). A Groq voice that fails (e.g. free limit) falls back to Gemini. Returns WAV."""
+    settings = get_settings()
+    provider, _, name = req.voice.rpartition(":")
+    provider = provider or "groq"
+    groq_tts, gemini = get_groq_tts(), get_gemini_tts()
+    log = logging.getLogger("tutor.tts")
     try:
-        audio = await tts.synthesize(req.text, req.voice)
+        if provider == "gemini":
+            if gemini is None:
+                return JSONResponse({"detail": "Gemini voices need GEMINI_API_KEY."}, status_code=501)
+            audio = await gemini.synthesize(req.text, name, settings.gemini_tts_english_style)
+        elif provider == "groq":
+            if groq_tts is None:
+                return JSONResponse({"detail": "English voices need GROQ_API_KEY."}, status_code=501)
+            try:
+                audio = await groq_tts.synthesize(req.text, name)
+            except SpeechError as exc:
+                if gemini is None or exc.status == 400:
+                    raise
+                log.warning("Groq TTS failed (%s); using Gemini", exc)
+                audio = await gemini.synthesize(req.text, settings.gemini_tts_english_voice,
+                                                settings.gemini_tts_english_style)
+        else:
+            return JSONResponse({"detail": f"Unknown voice '{req.voice}'."}, status_code=400)
     except SpeechError as exc:
-        logging.getLogger("tutor.tts").warning("Groq TTS failed: %s", exc)
+        log.warning("English TTS failed: %s", exc)
         headers = {"Retry-After": str(max(1, round(exc.retry_after)))} if exc.retry_after else None
         return JSONResponse({"detail": str(exc)}, status_code=exc.status, headers=headers)
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})

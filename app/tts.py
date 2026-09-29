@@ -350,6 +350,22 @@ def pcm_to_wav(pcm: bytes, rate: int = 24000, channels: int = 1, width: int = 2)
     return out.getvalue()
 
 
+# Gemini prebuilt voices (all speak every supported language, including English and Urdu).
+GEMINI_VOICES = (
+    "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe",
+    "Enceladus", "Iapetus", "Umbriel", "Algieba", "Despina", "Erinome", "Algenib", "Rasalgethi",
+    "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird",
+    "Zubenelgenubi", "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
+)
+# Shown in the English voice picker: (voice, description)
+GEMINI_ENGLISH_VOICES = (
+    ("Charon", "male, informative"), ("Puck", "male, upbeat"), ("Fenrir", "male, excitable"),
+    ("Orus", "male, firm"), ("Iapetus", "male, clear"), ("Kore", "female, firm"),
+    ("Aoede", "female, breezy"), ("Leda", "female, youthful"), ("Zephyr", "female, bright"),
+    ("Sulafat", "female, warm"),
+)
+
+
 class GeminiTTS:
     """Google Gemini text-to-speech (supports Urdu). Free tier is request-limited, not per character."""
 
@@ -367,14 +383,19 @@ class GeminiTTS:
         self.client = client or httpx.AsyncClient(timeout=60)
         self._sleep = sleep
 
-    async def synthesize(self, text: str) -> bytes:
+    async def synthesize(self, text: str, voice: str | None = None, style: str | None = None) -> bytes:
+        """Speak `text`; voice/style default to the Urdu settings given at construction."""
         text = text.strip()[:MAX_TTS_CHARS]
         if not text:
             raise SpeechError("No text to speak.", 400)
-        prompt = f"{self.style}\n{text}" if self.style else text
+        voice = voice or self.voice
+        if voice not in GEMINI_VOICES:
+            raise SpeechError(f"Unknown voice '{voice}'.", 400)
+        style = (self.style if style is None else style).strip()
+        prompt = f"{style}\n{text}" if style else text
         for attempt in range(2):
             try:
-                return await self._synthesize_any_model(prompt)
+                return await self._synthesize_any_model(prompt, voice)
             except SpeechError as exc:
                 wait = exc.retry_after
                 if exc.status != 429 or wait is None or wait > self.MAX_WAIT or attempt == 1:
@@ -382,11 +403,11 @@ class GeminiTTS:
                 await self._sleep(wait + 0.3)
         raise AssertionError("unreachable")
 
-    async def _synthesize_any_model(self, prompt: str) -> bytes:
+    async def _synthesize_any_model(self, prompt: str, voice: str) -> bytes:
         while True:
             model = self.models[0]
             try:
-                return await self._request(model, prompt)
+                return await self._request(model, prompt, voice)
             except _ModelUnavailable as exc:
                 if len(self.models) == 1:
                     raise SpeechError(f"Gemini voice model unavailable: {exc}") from exc
@@ -394,12 +415,12 @@ class GeminiTTS:
                             model, exc, self.models[1])
                 self.models.pop(0)
 
-    async def _request(self, model: str, prompt: str) -> bytes:
+    async def _request(self, model: str, prompt: str, voice: str) -> bytes:
         body = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
-                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.voice}}},
+                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
             },
         }
         try:
