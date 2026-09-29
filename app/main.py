@@ -91,6 +91,10 @@ class ChatRequest(BaseModel):
 
 class SpeakRequest(BaseModel):
     text: str = Field(max_length=4000)
+    # Urdu voice chosen in the page: "gemini" (with `voice`), "elevenlabs" or "azure".
+    # None = the server's default order (Gemini, then ElevenLabs).
+    engine: str | None = Field(default=None, max_length=20)
+    voice: str | None = Field(default=None, max_length=40)
 
 
 class EnglishSpeakRequest(BaseModel):
@@ -172,6 +176,29 @@ async def transcribe_audio(request: Request, lang: str | None = None):
 
 _tts: Any = None
 _gemini_tts: GeminiTTS | None = None
+_elevenlabs_tts: ElevenLabsTTS | None = None
+
+
+def get_elevenlabs_tts() -> ElevenLabsTTS | None:
+    global _elevenlabs_tts
+    settings = get_settings()
+    if _elevenlabs_tts is None and settings.elevenlabs_api_key:
+        _elevenlabs_tts = ElevenLabsTTS(settings.elevenlabs_api_key, settings.elevenlabs_voice_id,
+                                        settings.elevenlabs_model)
+    return _elevenlabs_tts
+
+
+def urdu_engines() -> list[str]:
+    """Server Urdu voices available to choose from in the page, in default order."""
+    settings = get_settings()
+    engines = []
+    if settings.gemini_api_key:
+        engines.append("gemini")
+    if settings.elevenlabs_api_key:
+        engines.append("elevenlabs")
+    if not engines and settings.azure_speech_key and settings.azure_speech_region:
+        engines.append("azure")  # Azure is only used when neither of the above is set
+    return engines
 
 
 def get_gemini_tts() -> GeminiTTS | None:
@@ -191,8 +218,7 @@ def get_tts() -> Any:
     settings = get_settings()
     if _tts is not None:
         return _tts
-    eleven = (ElevenLabsTTS(settings.elevenlabs_api_key, settings.elevenlabs_voice_id,
-                            settings.elevenlabs_model) if settings.elevenlabs_api_key else None)
+    eleven = get_elevenlabs_tts()
     gemini = get_gemini_tts()
     if gemini:
         _tts = ChainTTS([gemini, eleven] if eleven else [gemini])
@@ -225,7 +251,9 @@ async def config():
             "tts_reply_budget": budget, "stt": bool(settings.groq_api_key),
             "english_voices": list(GROQ_ENGLISH_VOICES) if settings.groq_api_key else [],
             "gemini_voices": ([{"name": n, "desc": d} for n, d in GEMINI_ENGLISH_VOICES]
-                              if settings.gemini_api_key else [])}
+                              if settings.gemini_api_key else []),
+            "urdu_engines": urdu_engines(),
+            "gemini_urdu_voice": settings.gemini_tts_voice}
 
 
 @app.get("/api/tts/usage")
@@ -238,13 +266,21 @@ async def tts_usage():
 
 @app.post("/api/tts")
 async def speak(req: SpeakRequest):
-    """Text-to-speech with Azure (Urdu or English voice chosen from the text). Returns MP3."""
-    tts = get_tts()
+    """Server voice for Urdu (Gemini / ElevenLabs / Azure). Returns WAV or MP3."""
+    settings = get_settings()
+    if req.engine:
+        if req.engine not in urdu_engines():
+            return JSONResponse({"detail": f"Voice engine '{req.engine}' is not configured."}, status_code=501)
+        tts = {"gemini": get_gemini_tts, "elevenlabs": get_elevenlabs_tts}.get(req.engine, get_tts)()
+    else:
+        tts = get_tts()
     if tts is None:
         return JSONResponse({"detail": "Server voice needs GEMINI_API_KEY or ELEVENLABS_API_KEY (or Azure Speech settings)."},
                             status_code=501)
     try:
-        if hasattr(tts, "synthesize_with_type"):
+        if req.engine == "gemini":
+            audio, media_type = await tts.synthesize(req.text, req.voice or settings.gemini_tts_voice), "audio/wav"
+        elif hasattr(tts, "synthesize_with_type"):
             audio, media_type = await tts.synthesize_with_type(req.text)
         else:
             audio, media_type = await tts.synthesize(req.text), getattr(tts, "media_type", "audio/mpeg")
@@ -269,7 +305,7 @@ def get_groq_tts() -> GroqTTS | None:
 @app.post("/api/tts/english")
 async def speak_english(req: EnglishSpeakRequest):
     """Natural English voice chosen in the page's voice settings: "gemini:<Voice>" or "groq:<voice>"
-    (a bare name means Groq). A Groq voice that fails (e.g. free limit) falls back to Gemini. Returns WAV."""
+    (a bare name means Groq). No silent switching: the page decides what to do when a voice fails. WAV."""
     settings = get_settings()
     provider, _, name = req.voice.rpartition(":")
     provider = provider or "groq"
@@ -283,14 +319,7 @@ async def speak_english(req: EnglishSpeakRequest):
         elif provider == "groq":
             if groq_tts is None:
                 return JSONResponse({"detail": "English voices need GROQ_API_KEY."}, status_code=501)
-            try:
-                audio = await groq_tts.synthesize(req.text, name)
-            except SpeechError as exc:
-                if gemini is None or exc.status == 400:
-                    raise
-                log.warning("Groq TTS failed (%s); using Gemini", exc)
-                audio = await gemini.synthesize(req.text, settings.gemini_tts_english_voice,
-                                                settings.gemini_tts_english_style)
+            audio = await groq_tts.synthesize(req.text, name)
         else:
             return JSONResponse({"detail": f"Unknown voice '{req.voice}'."}, status_code=400)
     except SpeechError as exc:

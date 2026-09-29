@@ -301,3 +301,8 @@ button { font: inherit; cursor: pointer; }
 .call-top .hd-btn { padding: 6px 8px; }
 .end-btn { flex-shrink: 0; }
 @media (max-width: 400px) { .call-top h2 { font-size: 1rem; } }
+.voice-group { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }
+.voice-group h3 { margin: 12px 0 0; }
+.voice-row[hidden] { display: none; }
+.voice-group .test-btn { margin: 14px 0 6px; }
+.voice-row.chosen .field::after { content: " ✓ in use"; color: var(--accent); font-weight: 600; }

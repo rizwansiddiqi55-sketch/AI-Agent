@@ -209,7 +209,7 @@ def test_gemini_is_the_urdu_voice_with_elevenlabs_backup(memory, monkeypatch):
         get_settings.cache_clear()
 
 
-def test_english_gemini_voice_and_groq_fallback(memory, monkeypatch):
+def test_english_gemini_voice_and_no_silent_switch(memory, monkeypatch):
     from app import main
     from app.config import get_settings
     from app.tts import SpeechError
@@ -239,15 +239,46 @@ def test_english_gemini_voice_and_groq_fallback(memory, monkeypatch):
         assert res.status_code == 200 and res.content == b"RIFFgemini"
         assert spoken[-1][0] == "Kore" and "English" in spoken[-1][1]
 
-        # Groq voice over its limit: Gemini's default English voice speaks instead
+        # Groq voice over its limit: no silent switch to another voice; the page decides
+        count = len(spoken)
         res = client.post("/api/tts/english", json={"text": "hi", "voice": "groq:troy"})
-        assert res.status_code == 200 and spoken[-1][0] == "Puck"
-
-        monkeypatch.setattr(main, "_gemini_tts", None)
-        monkeypatch.delenv("GEMINI_API_KEY")
-        get_settings.cache_clear()
-        res = client.post("/api/tts/english", json={"text": "hi", "voice": "troy"})
         assert res.status_code == 429 and res.headers["Retry-After"] == "3600"
+        assert len(spoken) == count
+    finally:
+        get_settings.cache_clear()
+
+
+def test_urdu_engine_and_voice_chosen_by_page(memory, monkeypatch):
+    from app import main
+    from app.config import get_settings
+
+    calls = []
+
+    class FakeGemini:
+        async def synthesize(self, text, voice=None, style=None):
+            calls.append(("gemini", voice))
+            return b"RIFFg"
+
+    class FakeEleven:
+        async def synthesize(self, text):
+            calls.append(("elevenlabs", None))
+            return b"ID3e"
+
+    monkeypatch.setenv("GEMINI_API_KEY", "gk")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "ek")
+    get_settings.cache_clear()
+    monkeypatch.setattr(main, "_gemini_tts", FakeGemini())
+    monkeypatch.setattr(main, "_elevenlabs_tts", FakeEleven())
+    try:
+        client = make_client(memory, [])
+        cfg = client.get("/api/config").json()
+        assert cfg["urdu_engines"] == ["gemini", "elevenlabs"] and cfg["gemini_urdu_voice"] == "Charon"
+        res = client.post("/api/tts", json={"text": "سلام", "engine": "gemini", "voice": "Kore"})
+        assert res.status_code == 200 and res.headers["content-type"] == "audio/wav"
+        res = client.post("/api/tts", json={"text": "سلام", "engine": "elevenlabs"})
+        assert res.status_code == 200 and res.headers["content-type"] == "audio/mpeg"
+        assert calls == [("gemini", "Kore"), ("elevenlabs", None)]
+        assert client.post("/api/tts", json={"text": "سلام", "engine": "azure"}).status_code == 501
     finally:
         get_settings.cache_clear()
 

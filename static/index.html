@@ -132,14 +132,50 @@
       <h2>Voice settings</h2>
       <button type="button" id="closeVoice" class="ghost" aria-label="Close">✕</button>
     </div>
-    <label class="field" for="enVoice">English voice</label>
-    <select id="enVoice" class="field-input"></select>
-    <p class="muted" id="voiceCount"></p>
+    <section class="voice-group" aria-labelledby="enHead">
+      <h3 id="enHead">🇬🇧 English</h3>
+      <label class="field" for="enEngine">Speak English with</label>
+      <select id="enEngine" class="field-input"></select>
+      <div class="voice-row" data-engine="gemini">
+        <label class="field" for="enGemini">Gemini voice</label>
+        <select id="enGemini" class="field-input"></select>
+      </div>
+      <div class="voice-row" data-engine="groq">
+        <label class="field" for="enGroq">Groq voice</label>
+        <select id="enGroq" class="field-input"></select>
+      </div>
+      <div class="voice-row" data-engine="phone">
+        <label class="field" for="enPhone">Phone voice</label>
+        <select id="enPhone" class="field-input"></select>
+      </div>
+      <button type="button" id="testEn" class="test-btn">▶ Test English</button>
+    </section>
+
+    <section class="voice-group" id="urGroup" aria-labelledby="urHead">
+      <h3 id="urHead">🇵🇰 Urdu</h3>
+      <label class="field" for="urEngine">Speak Urdu with</label>
+      <select id="urEngine" class="field-input"></select>
+      <div class="voice-row" data-engine="gemini">
+        <label class="field" for="urGemini">Gemini voice</label>
+        <select id="urGemini" class="field-input"></select>
+      </div>
+      <button type="button" id="testUr" class="test-btn">▶ Test Urdu</button>
+    </section>
+
+    <section class="voice-group" aria-labelledby="backupHead">
+      <h3 id="backupHead">When a free limit is reached</h3>
+      <select id="backup" class="field-input" aria-labelledby="backupHead">
+        <option value="natural">Use my other natural voice (chosen above)</option>
+        <option value="phone">Use the phone voice</option>
+        <option value="none">Don't switch: show the text until my voice is back</option>
+      </select>
+      <p class="muted small">Free plans allow only a few requests per minute (Groq: 10) and per day. The app joins sentences to use as few as possible, and tells you when it switches.</p>
+    </section>
+
     <label class="field" for="rate">Speed <span id="rateValue">1.0×</span></label>
     <input id="rate" type="range" min="0.5" max="1.5" step="0.1" value="1">
-    <button type="button" id="testVoice" class="test-btn">▶ Test voice</button>
-    <p class="muted small">Your choice is saved on this device. <b>Gemini voices</b> and <b>Groq voices</b> sound the most human and are free (with per-minute/daily limits). If a Groq voice hits its limit, a Gemini voice speaks instead. <b>Phone voices</b> work offline.</p>
-    <p class="muted small"><b>Downloaded iPhone voices not listed?</b> iPhone only lets websites and web apps use some of its voices; most downloaded Enhanced/Premium voices stay hidden from web apps. Use a natural voice above instead.</p>
+    <p class="muted" id="voiceCount"></p>
+    <p class="muted small">Your choices are saved on this device. <b>Downloaded iPhone voices not listed?</b> iPhone lets web apps use only some of its voices; most downloaded Enhanced/Premium voices stay hidden. Use a Gemini or Groq voice instead.</p>
   </aside>
 
   <aside id="progressPanel" class="panel" hidden>

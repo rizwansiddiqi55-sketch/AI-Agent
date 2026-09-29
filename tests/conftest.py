@@ -78,5 +78,5 @@ def _reset_voice_singletons(monkeypatch):
     """Voice clients are cached per process; start every test without them."""
     import app.main as main
 
-    for name in ("_tts", "_groq_tts", "_gemini_tts"):
+    for name in ("_tts", "_groq_tts", "_gemini_tts", "_elevenlabs_tts"):
         monkeypatch.setattr(main, name, None)

@@ -58,8 +58,6 @@ class Settings(BaseSettings):
     gemini_tts_voice: str = "Charon"
     # Delivery instruction placed before the text (empty = read the text as is).
     gemini_tts_style: str = "Read aloud in clear Pakistani Urdu, warm and natural, like a friendly teacher:"
-    # English voice used when a Groq voice hits its limit.
-    gemini_tts_english_voice: str = "Puck"
     gemini_tts_english_style: str = "Read aloud in clear, natural English, like a friendly teacher:"
 
     # Azure Speech text-to-speech (natural Urdu voice). Both key and region are needed.

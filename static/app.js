@@ -106,52 +106,100 @@ function silentWavUrl() {
   return "data:audio/wav;base64," + btoa(bin);
 }
 
+// Voice choices, saved on this device. For each language: which engine speaks, and which voice to
+// use on each engine. `backup` decides what happens when the chosen voice hits a free limit.
+function loadVoiceSettings() {
+  let saved = {};
+  try { saved = JSON.parse(storageGet("tutor.voices") || "{}") || {}; } catch { saved = {}; }
+  const cfg = {
+    en: { engine: "", gemini: "Puck", groq: "troy", phone: "", ...(saved.en || {}) },
+    ur: { engine: "", gemini: "", ...(saved.ur || {}) },
+    backup: saved.backup || "natural",  // "natural" | "phone" | "none"
+  };
+  // Earlier versions saved one English voice as "groq:troy", "gemini:Kore" or a phone voice name.
+  const old = storageGet("tutor.enVoice");
+  if (!saved.en && old) {
+    const [provider, name] = old.split(":");
+    if (provider === "groq" || provider === "gemini") { cfg.en.engine = provider; cfg.en[provider] = name; }
+    else { cfg.en.engine = "phone"; cfg.en.phone = old; }
+  }
+  return cfg;
+}
+
+const ENGINE_LABEL = { gemini: "Gemini", groq: "Groq", elevenlabs: "ElevenLabs", azure: "Azure", phone: "Phone voice" };
+
 const tts = {
-  voices: [],
+  voices: [],        // the device's own voices (speechSynthesis)
   queue: 0,          // sentences waiting or playing (queue > 0 means "speaking")
-  server: false,     // server voice available (set from /api/config)
-  scope: "all",      // "urdu": only Urdu sentences use the server voice
-  hdEnabled: storageGet("tutor.hd") !== "0",  // user switch for the natural Urdu voice (saves free quota)
-  budget: null,      // max server-voice characters per reply (null = unlimited)
+  server: false,     // any server Urdu voice configured (set from /api/config)
+  hdEnabled: storageGet("tutor.hd") !== "0",  // switch for the natural Urdu voice (saves free quota)
+  budget: null,      // max ElevenLabs characters per reply (null = unlimited)
   replyChars: 0,
   skipped: false,
-  cache: new Map(),  // text -> audio blob promise, so repeated sentences cost nothing
+  cache: new Map(),  // engine+voice+text -> audio blob promise, so repeated sentences cost nothing
   items: [],
   playing: false,
   gen: 0,            // bumped on cancel so stale playback is ignored
   audio: new Audio(),
-  enVoiceName: storageGet("tutor.enVoice") || "",  // "" = automatic, "groq:<voice>", or a device voice name
-  rate: Number(storageGet("tutor.rate")) || 1,     // speaking speed for all voices
-  groqVoices: [],    // natural English voices from the server (Groq), set from /api/config
-  geminiVoices: [],  // [{name, desc}] Gemini voices, set from /api/config
-  enOk: true,        // false after a natural-voice error: use the device voice for the rest of the session
-  enPausedUntil: 0,  // free plans are limited per minute/day: phone voice until the limit clears
-  hdPausedUntil: 0,  // same for the Urdu voice
-  // The chosen natural English voice as "groq:<name>" / "gemini:<Name>", or "" for the phone voice.
-  englishVoice() {
-    const [provider, name] = this.enVoiceName.split(":");
-    const available = provider === "groq" ? this.groqVoices.includes(name)
-      : provider === "gemini" ? this.geminiVoices.some((v) => v.name === name) : false;
-    if (!available || !this.enOk || Date.now() < this.enPausedUntil) return "";
-    return this.enVoiceName;
-  },
+  rate: Number(storageGet("tutor.rate")) || 1,  // speaking speed for all voices
+  cfg: loadVoiceSettings(),
+  groqVoices: [],    // Groq English voice names (from /api/config)
+  geminiVoices: [],  // [{name, desc}] Gemini voices (from /api/config)
+  urduEngines: [],   // server Urdu engines, e.g. ["gemini", "elevenlabs"] (from /api/config)
+  geminiUrduVoice: "Charon",
+  pausedUntil: {},   // engine -> time its free limit clears
+  disabled: {},      // engine -> true after a hard error (bad key...) for this session
+  saveCfg() { storageSet("tutor.voices", JSON.stringify(this.cfg)); },
   load() {
     this.voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
   },
+  // Engines that can speak each language right now (configured on the server), phone last.
+  engines(lang) {
+    const natural = lang === "en"
+      ? [this.geminiVoices.length && "gemini", this.groqVoices.length && "groq"].filter(Boolean)
+      : this.urduEngines;
+    return [...natural, "phone"];
+  },
+  // The engine the user chose for a language (or the first available one).
+  engine(lang) {
+    if (lang === "ur" && !this.hdEnabled) return "phone";
+    const all = this.engines(lang);
+    return all.includes(this.cfg[lang].engine) ? this.cfg[lang].engine : all[0];
+  },
+  voiceFor(lang, engine) {
+    if (engine === "gemini") return lang === "en" ? this.cfg.en.gemini : (this.cfg.ur.gemini || this.geminiUrduVoice);
+    if (engine === "groq") return this.cfg.en.groq;
+    return "";
+  },
+  label(lang, engine) {
+    const voice = this.voiceFor(lang, engine);
+    const name = voice ? ` · ${voice[0].toUpperCase()}${voice.slice(1)}` : "";
+    return ENGINE_LABEL[engine] + name;
+  },
+  // What to try, in order: the chosen engine, then backups the user allowed.
+  chain(lang) {
+    const primary = this.engine(lang);
+    if (primary === "phone") return ["phone"];
+    const backup = this.cfg.backup;
+    const others = backup === "natural" ? this.engines(lang).filter((e) => e !== primary && e !== "phone") : [];
+    return [primary, ...others, ...(backup === "none" ? [] : ["phone"])];
+  },
   useHd() { return this.server && this.hdEnabled; },
   hasUrdu() {
-    return this.useHd() || this.voices.some((v) => v.lang.toLowerCase().startsWith("ur"));
+    return (this.hdEnabled && this.urduEngines.length > 0)
+      || this.voices.some((v) => v.lang.toLowerCase().startsWith("ur"));
   },
   newReply() { this.replyChars = 0; this.skipped = false; },
   englishVoices() {
     return this.voices.filter((v) => v.lang.toLowerCase().startsWith("en"));
   },
   pickVoice(text) {
-    if (this.enVoiceName && !URDU_RE.test(text)) {
-      const chosen = this.voices.find((v) => v.name === this.enVoiceName);
+    const urdu = URDU_RE.test(text);
+    if (!urdu && this.cfg.en.phone) {
+      const chosen = this.voices.find((v) => v.name === this.cfg.en.phone);
       if (chosen) return chosen;
     }
-    const want = URDU_RE.test(text) ? ["ur"] : ["en-gb", "en-us", "en-in", "en"];
+    const want = urdu ? ["ur"] : ["en-gb", "en-us", "en-in", "en"];
     for (const prefix of want) {
       const v = this.voices.find((v) => v.lang.toLowerCase().replace("_", "-").startsWith(prefix));
       if (v) return v;
@@ -161,41 +209,34 @@ const tts = {
   speak(text) {
     const clean = cleanForSpeech(text);
     if (!clean) return;
-    // One ordered queue: HD voice (Gemini/ElevenLabs/Azure) for Urdu (or all) sentences, the chosen Groq
-    // English voice for English sentences, device voice otherwise.
-    const urdu = URDU_RE.test(clean);
-    let useServer = this.useHd() && (this.scope === "all" || urdu);
-    if (useServer && this.budget && this.replyChars > 0 && this.replyChars + clean.length > this.budget) {
-      // Over this reply's credit budget: Urdu stays on screen, English uses the device voice.
-      this.skipped = true;
-      if (URDU_RE.test(clean)) return;
-      useServer = false;
+    const lang = URDU_RE.test(clean) ? "ur" : "en";
+    const chain = this.chain(lang);
+    if (chain[0] === "elevenlabs" && this.budget) {
+      // Over this reply's ElevenLabs credit budget: the rest stays on screen.
+      if (this.replyChars > 0 && this.replyChars + clean.length > this.budget) { this.skipped = true; return; }
+      this.replyChars += clean.length;
     }
-    const voice = !urdu ? this.englishVoice() : "";
-    const kind = useServer && !(voice && this.scope === "all") ? "hd" : (voice ? "en" : "");
-    if (kind === "hd" && !this.cache.has(`hd::${clean}`)) this.replyChars += clean.length;
-    // Join queued sentences into one request: the free voices are limited by requests per minute
+    // Join queued sentences into one request: free voices are limited by requests per minute
     // (Groq also allows only 200 characters per request).
     const last = this.items[this.items.length - 1];
-    const maxJoin = voice.startsWith("groq:") ? 200 : 450;
-    if (kind && last && last.kind === kind && last.voice === voice && !last.promise
+    const maxJoin = chain[0] === "groq" ? 200 : 450;
+    if (last && last.lang === lang && !last.promise && last.chain.join() === chain.join()
         && last.text.length + clean.length < maxJoin) {
       last.text += " " + clean;
       return;
     }
-    this.items.push({ text: clean, kind, voice, promise: null });
+    this.items.push({ text: clean, lang, chain, promise: null });
     this.started();
     if (!this.playing) this.playNext(this.gen);
   },
-  // Fetch lazily: only the playing sentence and the next one (free plans allow few requests at once).
-  fetchAudio(item) {
-    if (!item || !item.kind || item.promise) return;
-    const key = `${item.kind}:${item.voice}:${item.text}`;
-    if (this.cache.has(key)) { item.promise = this.cache.get(key); return; }
-    const [path, payload] = item.kind === "en"
-      ? ["/api/tts/english", { text: item.text, voice: item.voice }]
-      : ["/api/tts", { text: item.text }];
-    item.promise = api(path, {
+  request(item, engine) {
+    const voice = this.voiceFor(item.lang, engine);
+    const key = `${engine}:${voice}:${item.text}`;
+    if (this.cache.has(key)) return this.cache.get(key);
+    const [path, payload] = item.lang === "en"
+      ? ["/api/tts/english", { text: item.text, voice: `${engine}:${voice}` }]
+      : ["/api/tts", { text: item.text, engine, voice: voice || null }];
+    const promise = api(path, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     }).then(async (res) => {
       if (!res.ok) {
@@ -207,9 +248,51 @@ const tts = {
       }
       return res.blob();
     });
-    this.cache.set(key, item.promise);
-    item.promise.catch(() => this.cache.delete(key));  // errors handled in playNext
+    this.cache.set(key, promise);
+    promise.catch(() => this.cache.delete(key));
     if (this.cache.size > 100) this.cache.delete(this.cache.keys().next().value);
+    return promise;
+  },
+  // Resolve an item to {blob} / {phone} / {silent}, following its chain.
+  fetchAudio(item) {
+    if (!item || item.promise) return;
+    item.promise = (async () => {
+      const [primary] = item.chain;
+      for (const engine of item.chain) {
+        if (engine === "phone") {
+          if (primary !== "phone") this.noteSwitch(item.lang, primary, "phone");
+          return { phone: true };
+        }
+        if (this.disabled[engine] || Date.now() < (this.pausedUntil[engine] || 0)) continue;
+        try {
+          const blob = await this.request(item, engine);
+          if (engine !== primary) this.noteSwitch(item.lang, primary, engine);
+          return { blob };
+        } catch (err) {
+          if (err.status === 429) {
+            this.pausedUntil[engine] = Date.now() + (err.retryAfter || 20) * 1000;
+          } else {
+            this.disabled[engine] = true;
+            setStatus(`${this.label(item.lang, engine)} unavailable: ${err.message}`);
+          }
+        }
+      }
+      this.noteSwitch(item.lang, primary, null);
+      return { silent: true };
+    })();
+  },
+  // Say (once per pause) that the chosen voice is resting and what speaks meanwhile.
+  noteSwitch(lang, primary, used) {
+    const until = this.pausedUntil[primary] || 0;
+    const noteKey = `${lang}:${primary}:${used}:${until}`;
+    if (this.lastNote === noteKey || !until) return;
+    this.lastNote = noteKey;
+    const secs = Math.max(1, Math.round((until - Date.now()) / 1000));
+    const back = secs > 90 ? `about ${Math.ceil(secs / 60)} min` : `${secs}s`;
+    const who = this.label(lang, primary);
+    setStatus(used
+      ? `${who}: free limit reached. Using ${this.label(lang, used)} for ${back}.`
+      : `${who}: free limit reached. Reply is on screen; voice back in ${back}.`);
   },
   deviceSay(clean) {
     return new Promise((resolve) => {
@@ -222,14 +305,9 @@ const tts = {
       speechSynthesis.speak(u);
     });
   },
-  async playServer(item, gen) {
-    let url = null;
+  async playBlob(blob) {
+    const url = URL.createObjectURL(blob);
     try {
-      const blob = await item.promise;
-      if (gen !== this.gen) return;
-      // Prefetch the next sentence only now, so sentences that arrived meanwhile are joined into it.
-      if (this.ready(this.items[0])) this.fetchAudio(this.items[0]);
-      url = URL.createObjectURL(blob);
       this.audio.src = url;
       this.audio.defaultPlaybackRate = this.rate;  // loading a new src resets playbackRate to this
       this.audio.playbackRate = this.rate;
@@ -239,51 +317,28 @@ const tts = {
         this.audio.play().catch(reject);
       });
     } finally {
-      if (url) URL.revokeObjectURL(url);
+      URL.revokeObjectURL(url);
     }
   },
   async playNext(gen) {
     const item = this.items.shift();
     if (!item) { this.playing = false; return; }
     this.playing = true;
-    const ready = this.ready(item);
-    if (ready) this.fetchAudio(item);
-    if (!ready && this.ready(this.items[0])) this.fetchAudio(this.items[0]);  // prefetch while the phone speaks
+    this.fetchAudio(item);
+    const result = await item.promise;
+    if (gen !== this.gen) return;
+    // Prefetch the next one only now, so sentences that arrived meanwhile are joined into it.
+    this.fetchAudio(this.items[0]);
     try {
-      if (ready) await this.playServer(item, gen);
-      else await this.deviceSay(item.text);
-    } catch (err) {
+      if (result.blob) await this.playBlob(result.blob);
+      else if (result.phone) await this.deviceSay(item.text);
+    } catch {
       if (gen !== this.gen) return;
-      if (item.kind === "en") {
-        if (err.status === 429) {
-          // Free-plan limit: phone voice until it clears (long waits mean a daily limit).
-          const wait = err.retryAfter || 20;
-          this.enPausedUntil = Date.now() + wait * 1000;
-          if (wait > 60) setStatus(`Natural voice free limit reached; phone voice for about ${Math.ceil(wait / 60)} min.`);
-        } else {
-          this.enOk = false;
-          setStatus(`English voice unavailable (${err.message}). Using the phone voice.`);
-        }
-      } else if (err.status === 429 && err.retryAfter) {
-        // Urdu voice free limit: phone voice until it clears.
-        this.hdPausedUntil = Date.now() + err.retryAfter * 1000;
-        if (err.retryAfter > 60) setStatus(`Urdu voice free limit reached; phone voice for about ${Math.ceil(err.retryAfter / 60)} min.`);
-      } else if (err.status !== 429) {
-        // Quota used up, bad key, network...: use the device voice for the rest of this session.
-        this.server = false;
-        setStatus(`Natural voice unavailable (${err.message}). Using the device voice.`);
-      }
-      // Busy (429): just this sentence falls back; keep trying the natural voice for the next ones.
-      await this.deviceSay(item.text);
+      if (this.cfg.backup !== "none") await this.deviceSay(item.text);
     }
     if (gen !== this.gen) return;
     this.finished();
     this.playNext(gen);
-  },
-  ready(item) {
-    if (!item) return false;
-    if (item.kind === "hd") return this.useHd() && (!!item.promise || Date.now() >= this.hdPausedUntil);
-    return item.kind === "en" && this.enOk && (!!item.promise || Date.now() >= this.enPausedUntil);
   },
   started() {
     this.queue++;
@@ -981,38 +1036,46 @@ async function loadProgress() {
   body.innerHTML = html;
 }
 
-// ---- English voice settings ----
-function fillVoiceList() {
-  const select = $("enVoice");
-  const voices = tts.englishVoices();
+// ---- Voice settings: an engine per language, and a voice per engine ----
+function fillSelect(select, options, value) {
   select.innerHTML = "";
-  select.append(new Option("Automatic (phone voice)", ""));
-  if (tts.geminiVoices.length) {
-    const group = document.createElement("optgroup");
-    group.label = "Gemini voices (free, online)";
-    for (const v of tts.geminiVoices) group.append(new Option(`${v.name} (${v.desc})`, "gemini:" + v.name));
-    select.append(group);
-  }
-  if (tts.groqVoices.length) {
-    const group = document.createElement("optgroup");
-    group.label = "Groq voices (free, 10 per minute)";
-    for (const name of tts.groqVoices) {
-      group.append(new Option(name[0].toUpperCase() + name.slice(1), "groq:" + name));
+  for (const [val, text] of options) select.append(new Option(text, val));
+  select.value = options.some(([v]) => v === value) ? value : (options[0] ? options[0][0] : "");
+}
+const cap = (name) => name ? name[0].toUpperCase() + name.slice(1) : name;
+function fillVoiceSettings() {
+  const cfg = tts.cfg;
+  const engineOptions = (lang) => tts.engines(lang).map((e) => [e, ENGINE_LABEL[e]]);
+  fillSelect($("enEngine"), engineOptions("en"), tts.engine("en"));
+  fillSelect($("urEngine"), engineOptions("ur"), tts.engine("ur"));
+  const gemini = tts.geminiVoices.map((v) => [v.name, `${v.name} (${v.desc})`]);
+  fillSelect($("enGemini"), gemini, cfg.en.gemini);
+  fillSelect($("urGemini"), gemini, cfg.ur.gemini || tts.geminiUrduVoice);
+  fillSelect($("enGroq"), tts.groqVoices.map((v) => [v, cap(v)]), cfg.en.groq);
+  const phone = tts.englishVoices();
+  fillSelect($("enPhone"), [["", "Automatic (best available)"], ...phone.map((v) => [v.name, `${v.name} (${v.lang})`])],
+    cfg.en.phone);
+  $("backup").value = cfg.backup;
+  showVoiceRows();
+  $("voiceCount").textContent = `${phone.length} phone voice${phone.length === 1 ? "" : "s"} visible to this app.`;
+}
+// Show only the voice pickers for engines that exist; highlight the chosen engine's picker.
+function showVoiceRows() {
+  for (const [group, lang] of [[$("enEngine").closest(".voice-group"), "en"], [$("urGroup"), "ur"]]) {
+    const chosen = $(lang + "Engine").value;
+    for (const row of group.querySelectorAll(".voice-row")) {
+      row.hidden = !tts.engines(lang).includes(row.dataset.engine);
+      row.classList.toggle("chosen", row.dataset.engine === chosen);
     }
-    select.append(group);
   }
-  if (voices.length) {
-    const group = document.createElement("optgroup");
-    group.label = "Phone voices";
-    for (const v of voices) group.append(new Option(`${v.name} (${v.lang})`, v.name));
-    select.append(group);
-  }
-  const known = [...select.options].some((o) => o.value === tts.enVoiceName);
-  select.value = known ? tts.enVoiceName : "";
-  const natural = tts.groqVoices.length + tts.geminiVoices.length;
-  $("voiceCount").textContent =
-    `${natural ? natural + " natural voices · " : ""}` +
-    `${voices.length} phone voice${voices.length === 1 ? "" : "s"} visible to this app.`;
+  $("urGroup").hidden = tts.urduEngines.length === 0 && !tts.voices.some((v) => v.lang.startsWith("ur"));
+}
+function saveVoiceSetting(update) {
+  update(tts.cfg);
+  tts.saveCfg();
+  tts.pausedUntil = {};  // give a newly chosen voice a fresh try
+  tts.disabled = {};
+  showVoiceRows();
 }
 const RATES = [0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.5];
 function setRate(value) {
@@ -1036,27 +1099,33 @@ for (const id of ["speedBtn", "speedCallBtn"]) $(id).addEventListener("click", n
 showRate();
 $("voiceBtn").addEventListener("click", () => {
   tts.load();
-  fillVoiceList();
+  fillVoiceSettings();
   showRate();
   $("voicePanel").hidden = false;
 });
 $("closeVoice").addEventListener("click", () => { $("voicePanel").hidden = true; });
-$("enVoice").addEventListener("change", (e) => {
-  tts.enVoiceName = e.target.value;
-  tts.enOk = true;  // give a newly chosen natural voice another try
-  tts.enPausedUntil = 0;
-  storageSet("tutor.enVoice", tts.enVoiceName);
+$("enEngine").addEventListener("change", (e) => saveVoiceSetting((c) => { c.en.engine = e.target.value; }));
+$("enGemini").addEventListener("change", (e) => saveVoiceSetting((c) => { c.en.gemini = e.target.value; }));
+$("enGroq").addEventListener("change", (e) => saveVoiceSetting((c) => { c.en.groq = e.target.value; }));
+$("enPhone").addEventListener("change", (e) => saveVoiceSetting((c) => { c.en.phone = e.target.value; }));
+$("urEngine").addEventListener("change", (e) => {
+  saveVoiceSetting((c) => { c.ur.engine = e.target.value; });
+  if (e.target.value !== "phone" && !tts.hdEnabled) setHd(true);  // choosing a natural Urdu voice turns it on
 });
+$("urGemini").addEventListener("change", (e) => saveVoiceSetting((c) => { c.ur.gemini = e.target.value; }));
+$("backup").addEventListener("change", (e) => saveVoiceSetting((c) => { c.backup = e.target.value; }));
 $("rate").addEventListener("input", (e) => setRate(e.target.value));
-$("testVoice").addEventListener("click", () => {
+function testVoice(sample) {
   unlockAudio();
   tts.cancel();
   tts.newReply();
-  tts.speak("Hello Rizwan, this is how I will sound when I teach you. Shall we start?");
-});
+  tts.speak(sample);
+}
+$("testEn").addEventListener("click", () => testVoice("Hello Rizwan, this is how I will sound when I teach you. Shall we start?"));
+$("testUr").addEventListener("click", () => testVoice("السلام علیکم رضوان، میں آپ کا ٹیوٹر ہوں۔ کیا ہم شروع کریں؟"));
 if (window.speechSynthesis) {
   speechSynthesis.addEventListener("voiceschanged", () => {
-    if (!$("voicePanel").hidden) fillVoiceList();
+    if (!$("voicePanel").hidden) fillVoiceSettings();
   });
 }
 
@@ -1126,10 +1195,11 @@ async function loadConfig() {
   if (!res.ok) return;
   const data = await res.json();
   tts.server = !!data.tts;
-  tts.scope = data.tts_scope || "all";
   tts.budget = data.tts_reply_budget || null;
   tts.groqVoices = Array.isArray(data.english_voices) ? data.english_voices : [];
   tts.geminiVoices = Array.isArray(data.gemini_voices) ? data.gemini_voices : [];
+  tts.urduEngines = Array.isArray(data.urdu_engines) ? data.urdu_engines : [];
+  if (data.gemini_urdu_voice) tts.geminiUrduVoice = data.gemini_urdu_voice;
   setupHdControls();
 }
 
