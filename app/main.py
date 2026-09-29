@@ -23,7 +23,7 @@ from .config import ON_VERCEL, get_settings
 from .memory import LEVELS, SUBJECTS, Memory
 from .modes import MODES
 from .stt import TranscriptionError, transcribe
-from .tts import GROQ_ENGLISH_VOICES, AzureTTS, ElevenLabsTTS, GroqTTS, SpeechError
+from .tts import GROQ_ENGLISH_VOICES, AzureTTS, ChainTTS, ElevenLabsTTS, GeminiTTS, GroqTTS, SpeechError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -174,14 +174,19 @@ _tts: Any = None
 
 
 def get_tts() -> Any:
-    """ElevenLabs if configured, otherwise Azure, otherwise None (the page uses device voices)."""
+    """Gemini (then ElevenLabs as backup), ElevenLabs, Azure, or None (the page uses device voices)."""
     global _tts
     settings = get_settings()
     if _tts is not None:
         return _tts
-    if settings.elevenlabs_api_key:
-        _tts = ElevenLabsTTS(settings.elevenlabs_api_key, settings.elevenlabs_voice_id,
-                             settings.elevenlabs_model)
+    eleven = (ElevenLabsTTS(settings.elevenlabs_api_key, settings.elevenlabs_voice_id,
+                            settings.elevenlabs_model) if settings.elevenlabs_api_key else None)
+    if settings.gemini_api_key:
+        gemini = GeminiTTS(settings.gemini_api_key, settings.gemini_tts_model, settings.gemini_tts_voice,
+                           settings.gemini_tts_style, settings.gemini_tts_fallback_model)
+        _tts = ChainTTS([gemini, eleven] if eleven else [gemini])
+    elif eleven:
+        _tts = eleven
     elif settings.azure_speech_key and settings.azure_speech_region:
         _tts = AzureTTS(settings.azure_speech_key, settings.azure_speech_region,
                         settings.azure_urdu_voice, settings.azure_english_voice,
@@ -192,7 +197,7 @@ def get_tts() -> Any:
 def tts_scope() -> str:
     """Which sentences the page should send to the server voice: 'urdu' or 'all'."""
     settings = get_settings()
-    if settings.elevenlabs_api_key:
+    if settings.gemini_api_key or settings.elevenlabs_api_key:
         return "urdu" if settings.elevenlabs_scope.lower() != "all" else "all"
     return "all"
 
@@ -202,7 +207,9 @@ async def config():
     """Which server-side speech features are available, so the page can pick the best path."""
     tts = get_tts()
     settings = get_settings()
-    budget = settings.elevenlabs_reply_char_budget if settings.elevenlabs_api_key else None
+    # The per-reply character budget saves ElevenLabs credits; Gemini's free tier counts requests.
+    budget = (settings.elevenlabs_reply_char_budget
+              if settings.elevenlabs_api_key and not settings.gemini_api_key else None)
     return {"tts": tts is not None, "tts_scope": tts_scope() if tts else None,
             "tts_reply_budget": budget, "stt": bool(settings.groq_api_key),
             "english_voices": list(GROQ_ENGLISH_VOICES) if settings.groq_api_key else []}
@@ -221,14 +228,18 @@ async def speak(req: SpeakRequest):
     """Text-to-speech with Azure (Urdu or English voice chosen from the text). Returns MP3."""
     tts = get_tts()
     if tts is None:
-        return JSONResponse({"detail": "Server voice needs ELEVENLABS_API_KEY (or Azure Speech settings)."},
+        return JSONResponse({"detail": "Server voice needs GEMINI_API_KEY or ELEVENLABS_API_KEY (or Azure Speech settings)."},
                             status_code=501)
     try:
-        audio = await tts.synthesize(req.text)
+        if hasattr(tts, "synthesize_with_type"):
+            audio, media_type = await tts.synthesize_with_type(req.text)
+        else:
+            audio, media_type = await tts.synthesize(req.text), getattr(tts, "media_type", "audio/mpeg")
     except SpeechError as exc:
         logging.getLogger("tutor.tts").warning("TTS failed: %s", exc)
-        return JSONResponse({"detail": str(exc)}, status_code=exc.status)
-    return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+        headers = {"Retry-After": str(max(1, round(exc.retry_after)))} if exc.retry_after else None
+        return JSONResponse({"detail": str(exc)}, status_code=exc.status, headers=headers)
+    return Response(content=audio, media_type=media_type, headers={"Cache-Control": "no-store"})
 
 
 _groq_tts: GroqTTS | None = None

@@ -309,3 +309,82 @@ def test_groq_tts_stays_under_requests_per_minute():
     err = asyncio.run(run())
     assert slept == [5.0]
     assert err.status == 429 and err.retry_after > 8
+
+
+# ---- Gemini Urdu voice ----
+import base64
+
+from app.tts import ChainTTS, GeminiTTS
+
+
+def _gemini_ok(pcm=b"\x01\x00" * 6):
+    return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"inlineData": {
+        "mimeType": "audio/L16;codec=pcm;rate=24000", "data": base64.b64encode(pcm).decode()}}]}}]})
+
+
+def test_gemini_tts_returns_wav_and_sends_voice_and_style():
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        seen["key"] = request.headers["x-goog-api-key"]
+        seen["body"] = json.loads(request.content)
+        return _gemini_ok()
+
+    tts = GeminiTTS("gk", "gemini-3.1-flash-tts-preview", "Charon", "Read in Urdu:",
+                    client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    audio = asyncio.run(tts.synthesize("السلام علیکم"))
+    with wave.open(io.BytesIO(audio), "rb") as r:
+        assert r.getframerate() == 24000 and r.getnframes() == 6
+    assert seen["url"].endswith("/models/gemini-3.1-flash-tts-preview:generateContent")
+    assert seen["key"] == "gk"
+    cfg = seen["body"]["generationConfig"]
+    assert cfg["responseModalities"] == ["AUDIO"]
+    assert cfg["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Charon"
+    assert seen["body"]["contents"][0]["parts"][0]["text"] == "Read in Urdu:\nالسلام علیکم"
+
+
+def test_gemini_tts_falls_back_to_second_model():
+    urls = []
+
+    def handler(request):
+        urls.append(str(request.url))
+        if "3.1" in str(request.url):
+            return httpx.Response(404, json={"error": {"message": "models/x is not found"}})
+        return _gemini_ok()
+
+    tts = GeminiTTS("gk", "gemini-3.1-flash-tts-preview", "Kore", "",
+                    fallback_model="gemini-2.5-flash-preview-tts",
+                    client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    assert asyncio.run(tts.synthesize("سلام"))
+    assert asyncio.run(tts.synthesize("سلام"))
+    assert len(urls) == 3 and "2.5" in urls[1] and "2.5" in urls[2]  # remembers the working model
+
+
+def test_gemini_tts_rate_limit():
+    def handler(request):
+        return httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED", "message": "quota",
+                                                   "details": [{"retryDelay": "40s"}]}})
+
+    tts = GeminiTTS("gk", "m", "Kore", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(SpeechError) as exc:
+        asyncio.run(tts.synthesize("سلام"))
+    assert exc.value.status == 429 and exc.value.retry_after == 40
+
+
+def test_chain_uses_backup_voice_when_first_fails():
+    class Failing:
+        media_type = "audio/wav"
+
+        async def synthesize(self, text):
+            raise SpeechError("limit", 429, retry_after=40)
+
+    class Backup:
+        async def synthesize(self, text):
+            return b"mp3"
+
+    audio, media = asyncio.run(ChainTTS([Failing(), Backup()]).synthesize_with_type("سلام"))
+    assert audio == b"mp3" and media == "audio/mpeg"
+    with pytest.raises(SpeechError) as exc:
+        asyncio.run(ChainTTS([Failing()]).synthesize_with_type("سلام"))
+    assert exc.value.retry_after == 40

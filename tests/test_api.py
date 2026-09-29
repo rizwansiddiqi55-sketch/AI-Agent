@@ -142,6 +142,8 @@ def test_tts_and_config_endpoints(memory, monkeypatch):
             return b"mp3:" + text.encode()
 
     monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     get_settings.cache_clear()
     monkeypatch.setattr(main, "_tts", None)
     try:
@@ -188,6 +190,25 @@ def test_english_voice_endpoint(memory, monkeypatch):
         get_settings.cache_clear()
 
 
+def test_gemini_is_the_urdu_voice_with_elevenlabs_backup(memory, monkeypatch):
+    from app import main
+    from app.config import get_settings
+    from app.tts import ChainTTS, ElevenLabsTTS, GeminiTTS
+
+    monkeypatch.setenv("GEMINI_API_KEY", "gk")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "ek")
+    get_settings.cache_clear()
+    monkeypatch.setattr(main, "_tts", None)
+    try:
+        client = make_client(memory, [])
+        cfg = client.get("/api/config").json()
+        assert cfg["tts"] is True and cfg["tts_scope"] == "urdu" and cfg["tts_reply_budget"] is None
+        assert isinstance(main._tts, ChainTTS)
+        assert [type(e) for e in main._tts.engines] == [GeminiTTS, ElevenLabsTTS]
+    finally:
+        get_settings.cache_clear()
+
+
 def test_library_endpoint(memory):
     client = make_client(memory, [])
     topics = client.get("/api/library").json()["topics"]
@@ -222,6 +243,8 @@ def test_elevenlabs_preferred_and_scope(memory, monkeypatch):
     from app.tts import ElevenLabsTTS
 
     monkeypatch.setenv("ELEVENLABS_API_KEY", "xi")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("AZURE_SPEECH_KEY", "k")
     monkeypatch.setenv("AZURE_SPEECH_REGION", "eastus")
     get_settings.cache_clear()
@@ -251,6 +274,8 @@ def test_tts_usage_and_budget_config(memory, monkeypatch):
             return {"used": 1, "limit": 10, "left": 9, "resets_at": None}
 
     monkeypatch.setenv("ELEVENLABS_API_KEY", "xi")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("ELEVENLABS_REPLY_CHAR_BUDGET", "200")
     get_settings.cache_clear()
     monkeypatch.setattr(main, "_tts", FakeTTS())

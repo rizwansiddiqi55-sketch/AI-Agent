@@ -47,6 +47,18 @@ class Settings(BaseSettings):
     # Max characters of one reply sent to ElevenLabs; the rest stays on screen (saves credits).
     elevenlabs_reply_char_budget: int = 350
 
+    # Google Gemini text-to-speech: natural Urdu voice (free tier; used before ElevenLabs).
+    gemini_api_key: str | None = Field(
+        default=None, validation_alias=AliasChoices("GEMINI_API_KEY", "GOOGLE_API_KEY")
+    )
+    gemini_tts_model: str = "gemini-3.1-flash-tts-preview"
+    # Tried when the model above is unavailable for the key.
+    gemini_tts_fallback_model: str = "gemini-2.5-flash-preview-tts"
+    # Any prebuilt Gemini voice, e.g. Charon (informative), Kore (firm), Puck (upbeat), Aoede.
+    gemini_tts_voice: str = "Charon"
+    # Delivery instruction placed before the text (empty = read the text as is).
+    gemini_tts_style: str = "Read aloud in clear Pakistani Urdu, warm and natural, like a friendly teacher:"
+
     # Azure Speech text-to-speech (natural Urdu voice). Both key and region are needed.
     azure_speech_key: str | None = None
     azure_speech_region: str | None = None

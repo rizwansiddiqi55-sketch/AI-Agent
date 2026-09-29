@@ -1,6 +1,7 @@
 """Server-side text-to-speech: ElevenLabs (Eleven v3, supports Urdu) or Azure Speech neural voices."""
 
 import asyncio
+import base64
 import io
 import logging
 import re
@@ -337,3 +338,151 @@ def _groq_error_message(res: httpx.Response) -> str:
     if isinstance(error, dict) and error.get("message"):
         return str(error["message"])
     return res.text[:200]
+
+
+def pcm_to_wav(pcm: bytes, rate: int = 24000, channels: int = 1, width: int = 2) -> bytes:
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(width)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+    return out.getvalue()
+
+
+class GeminiTTS:
+    """Google Gemini text-to-speech (supports Urdu). Free tier is request-limited, not per character."""
+
+    media_type = "audio/wav"
+    URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    MAX_WAIT = 8.0
+
+    def __init__(self, api_key: str, model: str, voice: str, style: str = "",
+                 fallback_model: str | None = None, client: httpx.AsyncClient | None = None,
+                 sleep=asyncio.sleep):
+        self.api_key = api_key
+        self.models = [model] + ([fallback_model] if fallback_model and fallback_model != model else [])
+        self.voice = voice
+        self.style = style.strip()
+        self.client = client or httpx.AsyncClient(timeout=60)
+        self._sleep = sleep
+
+    async def synthesize(self, text: str) -> bytes:
+        text = text.strip()[:MAX_TTS_CHARS]
+        if not text:
+            raise SpeechError("No text to speak.", 400)
+        prompt = f"{self.style}\n{text}" if self.style else text
+        for attempt in range(2):
+            try:
+                return await self._synthesize_any_model(prompt)
+            except SpeechError as exc:
+                wait = exc.retry_after
+                if exc.status != 429 or wait is None or wait > self.MAX_WAIT or attempt == 1:
+                    raise
+                await self._sleep(wait + 0.3)
+        raise AssertionError("unreachable")
+
+    async def _synthesize_any_model(self, prompt: str) -> bytes:
+        while True:
+            model = self.models[0]
+            try:
+                return await self._request(model, prompt)
+            except _ModelUnavailable as exc:
+                if len(self.models) == 1:
+                    raise SpeechError(f"Gemini voice model unavailable: {exc}") from exc
+                log.warning("Gemini TTS model %s unavailable (%s); switching to %s",
+                            model, exc, self.models[1])
+                self.models.pop(0)
+
+    async def _request(self, model: str, prompt: str) -> bytes:
+        body = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": self.voice}}},
+            },
+        }
+        try:
+            res = await self.client.post(self.URL.format(model=model), json=body,
+                                         headers={"x-goog-api-key": self.api_key})
+        except httpx.HTTPError as exc:
+            raise SpeechError(f"Could not reach Gemini: {exc.__class__.__name__}") from exc
+        if res.status_code == 200:
+            return _gemini_audio(res)
+        error = _gemini_error(res)
+        message = error.get("message") or res.text[:200]
+        if res.status_code == 404:
+            raise _ModelUnavailable(message)
+        if res.status_code in (401, 403) or error.get("status") == "PERMISSION_DENIED" \
+                or "API key not valid" in message:
+            raise SpeechError("Gemini API key is invalid (GEMINI_API_KEY).")
+        if res.status_code == 429:
+            wait = _gemini_retry_delay(error)
+            raise SpeechError("Gemini free voice limit reached"
+                              + (f", try again in {wait:.0f}s." if wait else "."), 429, retry_after=wait)
+        if res.status_code == 400 and ("not found" in message.lower() or "not supported" in message.lower()):
+            raise _ModelUnavailable(message)
+        raise SpeechError(f"Gemini voice error {res.status_code}: {message}")
+
+
+class _ModelUnavailable(Exception):
+    pass
+
+
+def _gemini_error(res: httpx.Response) -> dict:
+    try:
+        body = res.json()
+    except ValueError:
+        return {}
+    error = body.get("error") if isinstance(body, dict) else None
+    return error if isinstance(error, dict) else {}
+
+
+def _gemini_retry_delay(error: dict) -> float | None:
+    for detail in error.get("details") or []:
+        delay = detail.get("retryDelay") if isinstance(detail, dict) else None
+        if isinstance(delay, str) and delay.endswith("s"):
+            try:
+                return float(delay[:-1])
+            except ValueError:
+                pass
+    match = re.search(r"retry in ([\d.]+)s", error.get("message") or "")
+    return float(match.group(1)) if match else None
+
+
+def _gemini_audio(res: httpx.Response) -> bytes:
+    try:
+        parts = res.json()["candidates"][0]["content"]["parts"]
+        inline = next(p["inlineData"] for p in parts if "inlineData" in p)
+        pcm = base64.b64decode(inline["data"])
+    except (ValueError, KeyError, IndexError, StopIteration, TypeError) as exc:
+        raise SpeechError("Gemini returned no audio.") from exc
+    rate = re.search(r"rate=(\d+)", inline.get("mimeType", ""))
+    return pcm_to_wav(pcm, rate=int(rate.group(1)) if rate else 24000)
+
+
+class ChainTTS:
+    """Try each voice in order (e.g. Gemini first, then ElevenLabs when Gemini's free limit is hit)."""
+
+    def __init__(self, engines: list):
+        self.engines = engines
+
+    @property
+    def media_type(self) -> str:
+        return getattr(self.engines[0], "media_type", "audio/mpeg")
+
+    async def synthesize(self, text: str) -> bytes:
+        return (await self.synthesize_with_type(text))[0]
+
+    async def synthesize_with_type(self, text: str) -> tuple[bytes, str]:
+        last: SpeechError | None = None
+        for engine in self.engines:
+            try:
+                return await engine.synthesize(text), getattr(engine, "media_type", "audio/mpeg")
+            except SpeechError as exc:
+                if exc.status == 400:
+                    raise
+                log.warning("%s failed (%s); trying the next voice", type(engine).__name__, exc)
+                last = exc
+        assert last is not None
+        raise last

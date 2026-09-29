@@ -111,7 +111,7 @@ const tts = {
   queue: 0,          // sentences waiting or playing (queue > 0 means "speaking")
   server: false,     // server voice available (set from /api/config)
   scope: "all",      // "urdu": only Urdu sentences use the server voice
-  hdEnabled: storageGet("tutor.hd") !== "0",  // user switch to save ElevenLabs credits
+  hdEnabled: storageGet("tutor.hd") !== "0",  // user switch for the natural Urdu voice (saves free quota)
   budget: null,      // max server-voice characters per reply (null = unlimited)
   replyChars: 0,
   skipped: false,
@@ -125,6 +125,7 @@ const tts = {
   groqVoices: [],    // natural English voices from the server (Groq), set from /api/config
   groqOk: true,      // false after a Groq voice error: use the device voice for the rest of the session
   groqPausedUntil: 0, // Groq free plan allows 10 requests/minute: phone voice until the limit clears
+  hdPausedUntil: 0,   // same for the Urdu voice (Gemini free tier is limited per minute/day)
   groqVoice() {
     const name = this.enVoiceName.startsWith("groq:") ? this.enVoiceName.slice(5) : "";
     if (Date.now() < this.groqPausedUntil) return "";
@@ -156,7 +157,7 @@ const tts = {
   speak(text) {
     const clean = cleanForSpeech(text);
     if (!clean) return;
-    // One ordered queue: HD voice (ElevenLabs/Azure) for Urdu (or all) sentences, the chosen Groq
+    // One ordered queue: HD voice (Gemini/ElevenLabs/Azure) for Urdu (or all) sentences, the chosen Groq
     // English voice for English sentences, device voice otherwise.
     const urdu = URDU_RE.test(clean);
     let useServer = this.useHd() && (this.scope === "all" || urdu);
@@ -169,11 +170,12 @@ const tts = {
     const voice = !urdu ? this.groqVoice() : "";
     const kind = useServer && !(voice && this.scope === "all") ? "hd" : (voice ? "en" : "");
     if (kind === "hd" && !this.cache.has(`hd::${clean}`)) this.replyChars += clean.length;
-    // Natural English voice: join queued sentences into one request (Groq allows 200 characters
-    // per request and 10 requests per minute on the free plan).
+    // Join queued sentences into one request: the free voices are limited by requests per minute
+    // (Groq also allows only 200 characters per request).
     const last = this.items[this.items.length - 1];
-    if (kind === "en" && last && last.kind === "en" && last.voice === voice && !last.promise
-        && last.text.length + clean.length < 200) {
+    const maxJoin = kind === "en" ? 200 : 450;
+    if (kind && last && last.kind === kind && last.voice === voice && !last.promise
+        && last.text.length + clean.length < maxJoin) {
       last.text += " " + clean;
       return;
     }
@@ -181,7 +183,7 @@ const tts = {
     this.started();
     if (!this.playing) this.playNext(this.gen);
   },
-  // Fetch lazily: only the playing sentence and the next one (free ElevenLabs allows ~2 at once).
+  // Fetch lazily: only the playing sentence and the next one (free plans allow few requests at once).
   fetchAudio(item) {
     if (!item || !item.kind || item.promise) return;
     const key = `${item.kind}:${item.voice}:${item.text}`;
@@ -258,6 +260,10 @@ const tts = {
           this.groqOk = false;
           setStatus(`English voice unavailable (${err.message}). Using the phone voice.`);
         }
+      } else if (err.status === 429 && err.retryAfter) {
+        // Urdu voice free limit: phone voice until it clears.
+        this.hdPausedUntil = Date.now() + err.retryAfter * 1000;
+        if (err.retryAfter > 60) setStatus(`Urdu voice free limit reached; phone voice for about ${Math.ceil(err.retryAfter / 60)} min.`);
       } else if (err.status !== 429) {
         // Quota used up, bad key, network...: use the device voice for the rest of this session.
         this.server = false;
@@ -272,7 +278,7 @@ const tts = {
   },
   ready(item) {
     if (!item) return false;
-    if (item.kind === "hd") return this.useHd();
+    if (item.kind === "hd") return this.useHd() && (!!item.promise || Date.now() >= this.hdPausedUntil);
     return item.kind === "en" && this.groqOk && (!!item.promise || Date.now() >= this.groqPausedUntil);
   },
   started() {
